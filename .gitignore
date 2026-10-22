@@ -1,0 +1,18 @@
+# Build artifacts
+build/
+bin/
+*.o
+*.obj
+*.exe
+*.dll
+*.a
+*.lib
+
+# Editor and IDE
+.vscode/
+.vs/
+*.user
+
+# Runtime generated data (optional to ignore or track)
+# widgets_config.json
+# tasks.json
