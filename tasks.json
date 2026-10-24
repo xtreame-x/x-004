@@ -1,0 +1,14 @@
+[
+  {
+    "completed": true,
+    "text": "Welcome to WinWidgets!"
+  },
+  {
+    "completed": false,
+    "text": "Drag widgets around your screen"
+  },
+  {
+    "completed": true,
+    "text": "Right-click widget for options & pin"
+  }
+]

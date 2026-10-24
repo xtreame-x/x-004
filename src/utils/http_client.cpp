@@ -120,10 +120,16 @@ std::string HttpClient::Get(const std::wstring& url, int timeoutSec) {
 
 void HttpClient::GetAsync(const std::wstring& url, std::function<void(bool success, const std::string& body)> callback, int timeoutSec) {
     std::thread([url, callback, timeoutSec]() {
-        std::string response = HttpClient::Get(url, timeoutSec);
-        bool success = !response.empty();
-        if (callback) {
-            callback(success, response);
+        try {
+            std::string response = HttpClient::Get(url, timeoutSec);
+            bool success = !response.empty();
+            if (callback) {
+                callback(success, response);
+            }
+        } catch (...) {
+            if (callback) {
+                callback(false, "");
+            }
         }
     }).detach();
 }

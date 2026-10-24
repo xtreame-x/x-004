@@ -65,7 +65,7 @@ void WidgetNews::FetchNews() {
         }
         m_isLoading = false;
         if (hwnd) {
-            PostMessage(hwnd, WM_PAINT, 0, 0);
+            InvalidateRect(hwnd, NULL, FALSE);
         }
     });
 }

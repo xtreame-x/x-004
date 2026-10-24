@@ -145,7 +145,10 @@ void WidgetManager::ResetLayout() {
         wHub->SetPosition(hubX, hubY);
     }
 
-    ShowAll();
+    for (auto& w : m_widgets) {
+        w->SetDisplayMode(WidgetBase::MODE_DESKTOP_LAYER);
+        w->Show(true);
+    }
     SaveConfig();
 }
 
@@ -167,7 +170,7 @@ void WidgetManager::LoadConfig() {
     }
 
     m_allLocked = root["all_locked"].as_bool(false);
-    m_allPinned = root["all_pinned"].as_bool(false);
+    m_allPinned = root["all_pinned"].as_bool(true);
 
     if (root.has("widgets")) {
         const auto& wList = root["widgets"];
@@ -180,13 +183,14 @@ void WidgetManager::LoadConfig() {
                 int width = item["width"].as_int(w->GetWidth());
                 int height = item["height"].as_int(w->GetHeight());
                 bool vis = item["visible"].as_bool(true);
-                bool pinned = item["pinned"].as_bool(false);
+                
+                int mode = item["display_mode"].as_int(item["pinned"].as_bool(true) ? (int)WidgetBase::MODE_DESKTOP_LAYER : (int)WidgetBase::MODE_NORMAL);
                 float op = (float)item["opacity"].as_number((double)w->GetOpacity());
 
                 w->SetPosition(x, y);
                 w->SetSize(width, height);
                 w->Show(vis);
-                w->SetPinned(pinned);
+                w->SetDisplayMode(static_cast<WidgetBase::DisplayMode>(mode));
                 w->SetOpacity(op);
                 w->SetLocked(m_allLocked);
             }
@@ -208,6 +212,7 @@ void WidgetManager::SaveConfig() {
         item["width"] = w->GetWidth();
         item["height"] = w->GetHeight();
         item["visible"] = w->IsVisible();
+        item["display_mode"] = (int)w->GetDisplayMode();
         item["pinned"] = w->IsPinned();
         item["opacity"] = (double)w->GetOpacity();
         wList[idUtf8] = item;
@@ -290,7 +295,7 @@ void WidgetManager::ShowTrayMenu() {
 
     UINT curIdx = (UINT)m_widgets.size();
     InsertMenuW(hMenu, curIdx++, MF_SEPARATOR, 0, NULL);
-    InsertMenuW(hMenu, curIdx++, MF_BYPOSITION | (m_allPinned ? MF_CHECKED : MF_UNCHECKED), ID_TRAY_PINALL, L"Pin All to Desktop");
+    InsertMenuW(hMenu, curIdx++, MF_BYPOSITION | (m_allPinned ? MF_CHECKED : MF_UNCHECKED), ID_TRAY_PINALL, L"Desktop UI Layer (Immune to Swipes)");
     InsertMenuW(hMenu, curIdx++, MF_BYPOSITION | (m_allLocked ? MF_CHECKED : MF_UNCHECKED), ID_TRAY_LOCKALL, L"Lock All Widget Positions");
     InsertMenuW(hMenu, curIdx++, MF_BYPOSITION, ID_TRAY_SHOWALL, L"Show All Widgets");
     InsertMenuW(hMenu, curIdx++, MF_BYPOSITION, ID_TRAY_RESET, L"Reset Default Layout");

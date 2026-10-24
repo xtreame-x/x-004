@@ -144,6 +144,8 @@ bool WidgetTasks::OnMouseDown(int x, int y, bool isRight) {
             AddTask(m_inputText);
             m_inputText.clear();
         }
+        m_inputFocused = false;
+        SetKeyboardFocusRequired(false);
         return true;
     }
 
@@ -151,11 +153,14 @@ bool WidgetTasks::OnMouseDown(int x, int y, bool isRight) {
     D2D1_RECT_F inR = GetInputRect();
     if (x >= inR.left && x <= inR.right && y >= inR.top && y <= inR.bottom) {
         m_inputFocused = true;
+        SetKeyboardFocusRequired(true);
+        SetFocus(m_hwnd);
         Redraw();
         return true;
     } else {
         if (m_inputFocused) {
             m_inputFocused = false;
+            SetKeyboardFocusRequired(false);
             Redraw();
         }
     }
@@ -198,8 +203,10 @@ void WidgetTasks::OnCharInput(wchar_t ch) {
         if (!m_inputText.empty()) {
             AddTask(m_inputText);
             m_inputText.clear();
-            Redraw();
         }
+        m_inputFocused = false;
+        SetKeyboardFocusRequired(false);
+        Redraw();
     } else if (ch >= 32) {
         if (m_inputText.length() < 50) {
             m_inputText.push_back(ch);
@@ -212,6 +219,7 @@ void WidgetTasks::OnKeyDown(WPARAM key) {
     if (!m_inputFocused) return;
     if (key == VK_ESCAPE) {
         m_inputFocused = false;
+        SetKeyboardFocusRequired(false);
         Redraw();
     }
 }

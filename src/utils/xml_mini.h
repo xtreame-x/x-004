@@ -16,58 +16,64 @@ public:
         std::vector<NewsArticle> articles;
         if (xmlContent.empty()) return articles;
 
-        size_t pos = 0;
-        while (true) {
-            size_t itemStart = xmlContent.find("<item", pos);
-            if (itemStart == std::string::npos) {
-                // try Atom <entry>
-                itemStart = xmlContent.find("<entry", pos);
-                if (itemStart == std::string::npos) break;
-            }
+        try {
+            size_t pos = 0;
+            while (pos < xmlContent.size()) {
+                size_t itemStart = xmlContent.find("<item", pos);
+                if (itemStart == std::string::npos) {
+                    itemStart = xmlContent.find("<entry", pos);
+                    if (itemStart == std::string::npos) break;
+                }
 
-            size_t itemClose = xmlContent.find(">", itemStart);
-            if (itemClose == std::string::npos) break;
+                size_t itemClose = xmlContent.find(">", itemStart);
+                if (itemClose == std::string::npos) break;
 
-            size_t itemEnd = xmlContent.find("</item>", itemClose);
-            if (itemEnd == std::string::npos) {
-                itemEnd = xmlContent.find("</entry>", itemClose);
-                if (itemEnd == std::string::npos) break;
-            }
+                size_t itemEnd = xmlContent.find("</item>", itemClose);
+                if (itemEnd == std::string::npos) {
+                    itemEnd = xmlContent.find("</entry>", itemClose);
+                    if (itemEnd == std::string::npos) break;
+                }
 
-            std::string itemBlock = xmlContent.substr(itemClose + 1, itemEnd - (itemClose + 1));
-            pos = itemEnd + 7;
+                if (itemEnd <= itemClose + 1) {
+                    pos = itemEnd + 7;
+                    continue;
+                }
 
-            std::string title = ExtractTag(itemBlock, "title");
-            std::string link = ExtractTag(itemBlock, "link");
-            if (link.empty()) {
-                // Check if link is an attribute like <link href="..." />
-                size_t linkTag = itemBlock.find("<link");
-                if (linkTag != std::string::npos) {
-                    size_t hrefPos = itemBlock.find("href=\"", linkTag);
-                    if (hrefPos != std::string::npos) {
-                        size_t hrefEnd = itemBlock.find("\"", hrefPos + 6);
-                        if (hrefEnd != std::string::npos) {
-                            link = itemBlock.substr(hrefPos + 6, hrefEnd - (hrefPos + 6));
+                std::string itemBlock = xmlContent.substr(itemClose + 1, itemEnd - (itemClose + 1));
+                pos = itemEnd + 7;
+
+                std::string title = ExtractTag(itemBlock, "title");
+                std::string link = ExtractTag(itemBlock, "link");
+                if (link.empty()) {
+                    size_t linkTag = itemBlock.find("<link");
+                    if (linkTag != std::string::npos) {
+                        size_t hrefPos = itemBlock.find("href=\"", linkTag);
+                        if (hrefPos != std::string::npos) {
+                            size_t hrefEnd = itemBlock.find("\"", hrefPos + 6);
+                            if (hrefEnd != std::string::npos && hrefEnd > hrefPos + 6) {
+                                link = itemBlock.substr(hrefPos + 6, hrefEnd - (hrefPos + 6));
+                            }
                         }
                     }
                 }
+
+                std::string pubDate = ExtractTag(itemBlock, "pubDate");
+
+                title = CleanXmlText(title);
+                link = CleanXmlText(link);
+
+                if (!title.empty()) {
+                    NewsArticle art;
+                    art.title = HttpClient::Utf8ToWide(title);
+                    art.link = HttpClient::Utf8ToWide(link);
+                    art.source = defaultSource;
+                    art.pubDate = HttpClient::Utf8ToWide(pubDate);
+                    articles.push_back(art);
+                    if (articles.size() >= 20) break;
+                }
             }
-
-            std::string pubDate = ExtractTag(itemBlock, "pubDate");
-
-            // Strip CDATA and HTML entities
-            title = CleanXmlText(title);
-            link = CleanXmlText(link);
-
-            if (!title.empty()) {
-                NewsArticle art;
-                art.title = HttpClient::Utf8ToWide(title);
-                art.link = HttpClient::Utf8ToWide(link);
-                art.source = defaultSource;
-                art.pubDate = HttpClient::Utf8ToWide(pubDate);
-                articles.push_back(art);
-                if (articles.size() >= 20) break; // Limit to 20 articles
-            }
+        } catch (...) {
+            // Keep whatever was parsed safely
         }
 
         return articles;
