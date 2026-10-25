@@ -6,25 +6,20 @@ A high-performance, hardware-accelerated desktop shell for Windows written in na
 
 ## ✨ Features
 
-- **Obsidian Monolith Aesthetic & Frosted Glass Slate Dashboard**:
+- **Obsidian Monolith Aesthetic & Frosted Glass Transparency**:
   - Precision dark metallic gradient palette (`#090A0D` → `#111317` → `#181B22` → `#0D0E12`).
-  - **Floating Frosted Glass Slate Container**: Large rounded frosted glass slate (`1760x1016`, `r = 28px`) floating over the atmospheric background with translucent dark charcoal base (`rgba(12, 16, 24, 0.52)`), directional ambient light wash, 1px polished glass rim perimeter, and razor-sharp top edge highlight hairline.
-  - **Left Frosted Acrylic Sidebar**: Profile header, workspaces navigation (`Overview`, `Telemetry`, `Media`, `Coinbase Live`, `Notes`), and live hardware telemetry chips (Wi-Fi SSID + signal %, Bluetooth device, master volume).
-  - **Vibrant Pastel Telemetry Cards**:
-    - **Progress Card (Golden Amber `#FDE68A` / `#F59E0B`)**: Real-time battery charge level and AC charging status with milestone pins.
-    - **Local Time Card (Coral Sunset `#FED7AA` / `#F97316`)**: Live clock, date, system uptime, and 100 Hz frame pacing indicator.
-    - **System Vitals Card (Spring Mint `#BBF7D0` / `#10B981`)**: Real-time CPU, RAM, and Disk load meters.
-    - **Quick Apps Card (Sky Cyan `#BAE6FD` / `#0EA5E9`)**: 6 interactive badge tiles to directly launch Files, Terminal, Browser, Settings, Calculator, and Fullscreen.
-  - **Hero Media Card**: Duotone vinyl album artwork, animated audio equalizer visualizer bars, seek slider, and transport controls (Shuffle, Previous, Play/Pause, Next, Repeat).
-  - **Coinbase Bitcoin Leaderboard**: Dark frosted glass card with segmented pill tab switcher (`Coinbase` | `24h Trend` | `Market`), live price, 24h change badge, and live 24-point hourly sparkline.
-  - **Activity Stream**: Stacked floating dark frosted glass speech/card bubbles showing real-time live telemetry events (Coinbase, Wi-Fi, Bluetooth, Audio, Compositor).
+  - **Translucent Frosted Glass Cards**: Desktop widgets, bottom shelf dock, quick settings flyout, and window chrome render with a translucent frosted glass base (`rgba(14, 17, 24, 0.52)`), directional ambient light wash (`rgba(255, 255, 255, 0.038)`), 1px polished glass rim perimeter (`rgba(255, 255, 255, 0.13)`), and razor-sharp top edge highlight hairline (`rgba(255, 255, 255, 0.22)`).
+  - Active emerald accent badges (`#34D399` / `#10B981`) for battery and market indicators.
+  - Crisp typography rendered via hardware-accelerated **DirectWrite**.
 
 - **Physics-Based Motion Smoothing (`smooth-scrollbar` & `react-native`)**:
-  - **`smooth-scrollbar` Virtual Momentum Scrolling**: Decoupled scroll accumulator with exponential damping ($s_{t+1} = s_t + (s_{\text{target}} - s_t) \cdot (1 - e^{-\lambda \cdot dt})$) across all windows (Terminal, Files, Settings, Editor), replacing discrete wheel steps with fluid momentum glides.
-  - **`react-native` Critically Damped Harmonic Spring ($\zeta = 1.0, \omega = 14.5\text{ rad/s}$)**: Closed-form analytical ODE evaluation ensuring fastest possible convergence to target pages with zero overshoot.
-  - **$C^1$ Velocity Continuity**: 120ms weighted least-squares regression velocity tracking ($WLS$) with quadratic age weighting $(1 - \text{age})^2$ transferring finger/drag velocity directly into the spring ODE on release with zero jerk ($\frac{da}{dt} < \infty$).
+  - **`smooth-scrollbar` Virtual Momentum Scrolling**: Decoupled scroll accumulator with exponential damping ($s_{t+1} = s_t + (s_{\text{target}} - s_t) \cdot (1 - e^{-\lambda \cdot dt})$) across all windows (Terminal, Files, Settings, Notes, Editor), replacing discrete wheel jumps with fluid momentum glides.
+  - **Rock-Solid 1:1 Active Dragging**: Eliminates lookahead prediction jitter during active drag so the page adheres smoothly to the pointer without any "cracked" micro-jumps.
+  - **`react-native` Critically Damped Harmonic Spring ($\zeta = 1.0, \omega = 13.5\text{ rad/s}$)**: Closed-form analytical ODE evaluation ensuring fastest possible convergence to target pages with zero overshoot.
+  - **$C^1$ Velocity Continuity**: 120ms weighted least-squares regression velocity tracking ($WLS$) with quadratic age weighting $(1 - \text{age})^2$ transferring release velocity directly into the spring ODE on mouse/touch release with zero jerk ($\frac{da}{dt} < \infty$).
+  - **Wheel & Gesture Momentum Injection**: Mouse wheel flicks immediately launch the spring with momentum velocity ($v = \pm 3.2$) rather than starting from rest.
   - **Predictive Target Projection**: Fling target projection $x_{\text{projected}} = x_0 + \frac{v_0}{1 - d}$ for intuitive page snapping.
-  - **Bounded Rubber-Band Boundaries**: Hyperbolic overscroll resistance preventing harsh clamp walls.
+  - **Bounded Rubber-Band Boundaries**: Hyperbolic overscroll resistance preventing harsh clamp stops at edges.
 
 - **Custom Wallpaper Engine & Preset Gallery**:
   - **Native WIC Decoder**: Integrates Windows Imaging Component (`IWICImagingFactory`) to load and aspect-fill any `.jpg`, `.jpeg`, `.png`, `.bmp`, or `.webp` image directly into Direct2D bitmaps (`ID2D1Bitmap`).
