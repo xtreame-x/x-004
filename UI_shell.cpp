@@ -216,6 +216,31 @@ static void Card(float x, float y, float w, float h, float r, float alpha = 0.52
     Line(x + inset, y + 1.f, x + w - inset, y + 1.f, C(WHITE, 0.22f), 1.0f);
 }
 
+// Vibrant pastel card: rich luminous gradient + dark contrast typography + rim outline + subtle drop shadow
+static void PastelCard(float x, float y, float w, float h, float r, unsigned colTop, unsigned colBot, unsigned borderCol) {
+    if (w <= 0.f || h <= 0.f) return;
+    Shadow(x, y, w, h, r, 0.16f, 10);
+    Fill(x, y, w, h, r, C(colBot, 0.94f));
+    g_rt->PushAxisAlignedClip(R(x, y, w, h), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    Fill(x, y, w, h * 0.65f, r, C(colTop, 0.45f));
+    Fill(x, y, w, h * 0.40f, r, C(WHITE, 0.14f));
+    g_rt->PopAxisAlignedClip();
+    Stroke(x, y, w, h, r, C(borderCol, 0.55f), 1.0f);
+    float inset = std::min(r * 0.65f, 18.f);
+    Line(x + inset, y + 1.f, x + w - inset, y + 1.f, C(WHITE, 0.42f), 1.0f);
+}
+
+// Stacked activity speech/card bubble
+static void GlassBubble(float x, float y, float w, float h, float r, bool hovered = false) {
+    if (w <= 0.f || h <= 0.f) return;
+    if (hovered) Shadow(x, y, w, h, r, 0.12f, 8);
+    Fill(x, y, w, h, r, C(0x131722, hovered ? 0.72f : 0.52f));
+    if (hovered) Fill(x, y, w, h, r, C(WHITE, 0.035f));
+    Stroke(x, y, w, h, r, C(WHITE, hovered ? 0.18f : 0.09f), 1.0f);
+    float inset = std::min(r * 0.5f, 14.f);
+    Line(x + inset, y + 1.f, x + w - inset, y + 1.f, C(WHITE, hovered ? 0.28f : 0.16f), 1.0f);
+}
+
 // ----------------------------------------------------------------------------
 //  Text
 // ----------------------------------------------------------------------------
@@ -442,6 +467,7 @@ struct Win {
     float x = 0, y = 0, w = 0, h = 0;
     float rx = 0, ry = 0, rw = 0, rh = 0;       // restore geometry
     float scroll = 0.f;
+    float targetScroll = 0.f;
     std::wstring title;
     std::wstring input;                          // terminal / editor line
     std::vector<std::wstring> lines;
@@ -599,7 +625,11 @@ enum {
     H_UNLOCK = 850, H_FILE = 870,            // + row
     H_DESK = 900,
     H_HAPP = 1000,                           // + index (home-screen app tiles)
-    H_HDOT = 1050                            // + page  (home page dots)
+    H_HDOT = 1050,                           // + page  (home page dots)
+    H_DASH_NAV = 1100,                       // + index (workspace navigation)
+    H_DASH_SHORTCUT = 1120,                  // + index (quick app badges)
+    H_DASH_TAB = 1140,                       // + index (crypto tabs)
+    H_DASH_ACT = 1160                        // + index (activity bubbles)
 };
 enum { WP_BODY = 0, WP_TITLE = 1, WP_CLOSE = 2, WP_MIN = 3, WP_MAX = 4,
        WP_RIGHT = 5, WP_BOTTOM = 6, WP_CORNER = 7 };
@@ -1337,27 +1367,321 @@ static void InWidget(float x, float y, float s, F fn) {
     g_rt->SetTransform(D2D1::Matrix3x2F::Translation(g_pageDX, 0.f) * g_base);
 }
 
-static void DrawDesktopWidgets() {
-    shelllayout::Rect placed[shelllayout::W_COUNT];
-    // The shelf starts at 1096; widgets are clipped out above 1088 so they can
-    // never slide underneath it at the largest size.
-    const int n = shelllayout::Compute(g_widgetOn, g_widgetScale, 96.f, 88.f, 18.f, 18.f, 1088.f, placed);
-    for (int i = 0; i < n; ++i) {
-        const int id = placed[i].id;
-        InWidget(placed[i].x, placed[i].y, g_widgetScale, [id] {
-            switch (id) {
-            case shelllayout::W_CLOCK:     DrawClockCard(0.f, 0.f, 420.f, 200.f); break;
-            case shelllayout::W_WEATHER:   DrawWeather(0.f, 0.f, 300.f, 200.f); break;
-            case shelllayout::W_FINANCE:   DrawFinance(0.f, 0.f, 300.f, 200.f); break;
-            case shelllayout::W_NOTES:     DrawNotesCard(0.f, 0.f, 420.f, 352.f); break;
-            case shelllayout::W_MEDIA:     DrawMediaCard(0.f, 0.f, 420.f, 240.f); break;
-            case shelllayout::W_SYSTEM:    DrawSystemCard(0.f, 0.f, 300.f, 206.f); break;
-            case shelllayout::W_RECENT:    DrawRecentCard(0.f, 0.f, 300.f, 216.f); break;
-            case shelllayout::W_SHORTCUTS: DrawShortcutsCard(0.f, 0.f, 300.f, 232.f); break;
-            default: break;
-            }
-        });
+
+static int g_dashTab = 0; // 0 Coinbase, 1 24h, 2 Market
+static int g_dashNav = 0; // 0 Overview, 1 Telemetry, etc.
+
+static void DrawSlateDashboard() {
+    float sx = 80.f, sy = 48.f, sw = 1760.f, sh = 1016.f, sr = 28.f;
+
+    // 1. Ambient drop shadow giving floating slate depth
+    Shadow(sx, sy, sw, sh, sr, 0.32f, 18);
+
+    // 2. Translucent dark frosted glass base (softly diffusing the background wallpaper)
+    Fill(sx, sy, sw, sh, sr, C(0x0C1018, 0.52f));
+
+    // 3. Ambient upper light wash
+    g_rt->PushAxisAlignedClip(R(sx, sy, sw, sh), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    Fill(sx, sy, sw, 180.f, sr, C(WHITE, 0.035f));
+    g_rt->PopAxisAlignedClip();
+
+    // 4. Polished glass rim border
+    Stroke(sx, sy, sw, sh, sr, C(WHITE, 0.15f), 1.2f);
+
+    // 5. Razor-sharp top edge specular hairline
+    Line(sx + 32.f, sy + 1.2f, sx + sw - 32.f, sy + 1.2f, C(WHITE, 0.35f), 1.2f);
+
+    // =========================================================================
+    //  LEFT COLUMN: Acrylic Navigation Sidebar
+    // =========================================================================
+    float bx = sx, by = sy, bw = 260.f, bh = sh;
+    g_rt->PushAxisAlignedClip(R(bx, by, bw, bh), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    Fill(bx, by, bw, bh, sr, C(0x080A10, 0.55f));
+    g_rt->PopAxisAlignedClip();
+    Line(bx + bw, by + 20.f, bx + bw, by + bh - 20.f, C(WHITE, 0.08f), 1.f);
+
+    // Profile header
+    Disc(bx + 44.f, by + 46.f, 20.f, C(COL_ACTIVE, 0.95f));
+    Txt(L"OM", bx + 24.f, by + 26.f, 40.f, 40.f, F_SEMI, 13.f, 600, 0x090A0D, 1, 1.f);
+    Txt(L"Obsidian Shell", bx + 76.f, by + 34.f, 160.f, 22.f, F_SEMI, 14.5f, 600, COL_T90, 0, 1.f);
+    Txt(L"Online · 100 Hz locked", bx + 76.f, by + 56.f, 160.f, 18.f, F_UI, 11.f, 400, COL_ACC, 0, 1.f);
+
+    // Sections
+    Label(L"WORKSPACES", bx + 28.f, by + 98.f, bw - 56.f);
+    struct NavItem { wchar_t glyph; const wchar_t* name; };
+    static const NavItem navs[5] = {
+        { (wchar_t)0xE80F, L"Overview" },
+        { (wchar_t)0xE950, L"Telemetry" },
+        { (wchar_t)0xE8D6, L"Media Works" },
+        { (wchar_t)0xE946, L"Coinbase Live" },
+        { (wchar_t)0xE70B, L"Notes & Tasks" }
+    };
+    float ny = by + 124.f;
+    for (int i = 0; i < 5; ++i) {
+        bool act = (g_dashNav == i);
+        bool hov = (g_hover == H_DASH_NAV + i);
+        if (act) {
+            Fill(bx + 16.f, ny, bw - 32.f, 40.f, 12.f, C(WHITE, 0.10f));
+            Stroke(bx + 16.f, ny, bw - 32.f, 40.f, 12.f, C(WHITE, 0.16f));
+        } else if (hov) {
+            Fill(bx + 16.f, ny, bw - 32.f, 40.f, 12.f, C(WHITE, 0.045f));
+        }
+        Glyph(navs[i].glyph, bx + 36.f, ny + 20.f, 14.f, act ? COL_T100 : (hov ? COL_T90 : COL_T50));
+        Txt(navs[i].name, bx + 62.f, ny + 9.f, bw - 80.f, 22.f, F_UI, 12.5f, act ? 600 : 400,
+            act ? COL_T100 : (hov ? COL_T90 : COL_T70), 0, 1.f);
+        AddHit(bx + 16.f, ny, bw - 32.f, 40.f, H_DASH_NAV + i);
+        ny += 48.f;
     }
+
+    // Hardware Telemetry Chips
+    Label(L"CONNECTED", bx + 28.f, by + 400.f, bw - 56.f);
+    // Wi-Fi
+    Fill(bx + 16.f, by + 426.f, bw - 32.f, 48.f, 12.f, C(WHITE, 0.04f));
+    Glyph((wchar_t)0xE701, bx + 36.f, by + 450.f, 14.f, COL_ACC);
+    Txt(g_wifiSSID.c_str(), bx + 60.f, by + 432.f, bw - 80.f, 18.f, F_SEMI, 12.f, 600, COL_T90, 0, 1.f);
+    Txt((std::to_wstring(g_wifiSignal) + L"% signal · WLAN API").c_str(), bx + 60.f, by + 450.f, bw - 80.f, 16.f, F_UI, 10.5f, 400, COL_T50, 0, 1.f);
+
+    // Bluetooth
+    Fill(bx + 16.f, by + 484.f, bw - 32.f, 48.f, 12.f, C(WHITE, 0.04f));
+    Glyph((wchar_t)0xE702, bx + 36.f, by + 508.f, 14.f, 0x60A5FA);
+    Txt(g_togSub[TOG_BT].c_str(), bx + 60.f, by + 490.f, bw - 80.f, 18.f, F_SEMI, 12.f, 600, COL_T90, 0, 1.f);
+    Txt(L"Bluetooth Active · Paired", bx + 60.f, by + 508.f, bw - 80.f, 16.f, F_UI, 10.5f, 400, COL_T50, 0, 1.f);
+
+    // Master Sound
+    Fill(bx + 16.f, by + 542.f, bw - 32.f, 48.f, 12.f, C(WHITE, 0.04f));
+    Glyph((wchar_t)0xE767, bx + 36.f, by + 566.f, 14.f, COL_T90);
+    Txt(L"Master Volume", bx + 60.f, by + 548.f, bw - 80.f, 18.f, F_SEMI, 12.f, 600, COL_T90, 0, 1.f);
+    Txt((std::to_wstring((int)(g_vol * 100)) + L"% output level").c_str(), bx + 60.f, by + 566.f, bw - 80.f, 16.f, F_UI, 10.5f, 400, COL_T50, 0, 1.f);
+
+    // Settings Button (Bottom)
+    bool setHov = (g_hover == H_SETTINGS);
+    Fill(bx + 16.f, by + bh - 58.f, bw - 32.f, 42.f, 12.f, C(WHITE, setHov ? 0.08f : 0.035f));
+    if (setHov) Stroke(bx + 16.f, by + bh - 58.f, bw - 32.f, 42.f, 12.f, C(WHITE, 0.16f));
+    Glyph((wchar_t)0xE713, bx + 38.f, by + bh - 37.f, 14.f, setHov ? COL_T100 : COL_T70);
+    Txt(L"Settings", bx + 62.f, by + bh - 48.f, 140.f, 22.f, F_SEMI, 13.f, 600, setHov ? COL_T100 : COL_T80, 0, 1.f);
+    AddHit(bx + 16.f, by + bh - 58.f, bw - 32.f, 42.f, H_SETTINGS);
+
+    // =========================================================================
+    //  CENTER COLUMN: Hero Media Card + 4 Pastel Cards + Coinbase Leaderboard
+    // =========================================================================
+    float cx = sx + 276.f, cy = sy + 24.f, cw = 990.f;
+
+    // 1. Hero Media Player Card
+    float mh = 206.f;
+    Card(cx, cy, cw, mh, 22.f, 0.58f);
+
+    // Album art
+    float ax = cx + 22.f, ay = cy + 22.f, as = 88.f;
+    Fill(ax, ay, as, as, 18.f, C(0x1B202A));
+    Disc(ax + as * 0.5f, ay + as * 0.5f, as * 0.40f, C(0x283244, 0.95f));
+    Ring(ax + as * 0.5f, ay + as * 0.5f, as * 0.28f, C(0x3B4860, 0.95f), 1.2f);
+    Ring(ax + as * 0.5f, ay + as * 0.5f, as * 0.17f, C(0x4C5C7A, 0.95f), 1.2f);
+    Disc(ax + as * 0.5f, ay + as * 0.5f, as * 0.06f, C(0x0A0D14, 0.95f));
+    Stroke(ax, ay, as, as, 18.f, C(WHITE, 0.12f));
+
+    Txt(L"Neutral Obsidian", cx + 128.f, cy + 26.f, cw - 260.f, 28.f, F_SEMI, 16.f, 600, COL_T100, 0, 1.f);
+    Txt(L"Buffy · Ambient Works", cx + 128.f, cy + 54.f, cw - 260.f, 22.f, F_UI, 12.5f, 400, COL_T50, 0, 1.f);
+
+    // Audio Visualizer Waveform
+    const float wavT = g_motion ? (float)g_clockT : 0.f;
+    for (int i = 0; i < 32; ++i) {
+        float bh = 4.f + 14.f * std::fabs(std::sin((float)i * 0.8f + wavT * 1.8f));
+        Fill(cx + 128.f + i * 8.f, cy + 86.f - bh * 0.5f, 4.f, bh, 2.f, C(WHITE, 0.18f));
+    }
+
+    // Scrub slider
+    float tw = cw - 44.f;
+    float pv = Clamp(g_pos / (g_dur > 1.f ? g_dur : 1.f), 0.f, 1.f);
+    SliderDraw(cx + 22.f, cy + mh - 84.f, tw, pv, H_SEEK, 6.f);
+    Txt(MediaTime(g_pos), cx + 22.f, cy + mh - 62.f, 60.f, 18.f, F_MONO, 10.5f, 400, COL_T50, 0, 1.f);
+    Txt(MediaTime(g_dur), cx + cw - 82.f, cy + mh - 62.f, 60.f, 18.f, F_MONO, 10.5f, 400, COL_T50, 2, 1.f);
+
+    // Transport buttons
+    float mcy = cy + mh - 28.f;
+    bool hovS = (g_hover == H_SHUFFLE), hovR = (g_hover == H_REPEAT);
+    Glyph((wchar_t)0xE8B1, cx + 34.f, mcy, 13.f, hovS ? COL_T100 : COL_T50);
+    Glyph((wchar_t)0xE892, cx + cw * 0.5f - 48.f, mcy, 14.f, (g_hover == H_PREV) ? COL_T100 : COL_T70);
+    Disc(cx + cw * 0.5f, mcy, 18.f, C(COL_ACTIVE, (g_hover == H_PLAY) ? 1.f : 0.94f));
+    Glyph(g_playing ? (wchar_t)0xE769 : (wchar_t)0xE768, cx + cw * 0.5f, mcy, 12.f, 0x090A0D);
+    Glyph((wchar_t)0xE893, cx + cw * 0.5f + 48.f, mcy, 14.f, (g_hover == H_NEXT) ? COL_T100 : COL_T70);
+    Glyph((wchar_t)0xE8EE, cx + cw - 34.f, mcy, 13.f, hovR ? COL_T100 : COL_T50);
+
+    AddHit(cx + 20.f, mcy - 18.f, 30.f, 36.f, H_SHUFFLE);
+    AddHit(cx + cw * 0.5f - 66.f, mcy - 18.f, 36.f, 36.f, H_PREV);
+    AddHit(cx + cw * 0.5f - 18.f, mcy - 18.f, 36.f, 36.f, H_PLAY);
+    AddHit(cx + cw * 0.5f + 30.f, mcy - 18.f, 36.f, 36.f, H_NEXT);
+    AddHit(cx + cw - 52.f, mcy - 18.f, 30.f, 36.f, H_REPEAT);
+
+    // -------------------------------------------------------------------------
+    //  2x2 Vibrant Pastel Cards Grid (Matching the reference mockup!)
+    // -------------------------------------------------------------------------
+    float gy = cy + mh + 18.f;
+    float cardW = (cw - 18.f) * 0.5f;
+    float cardH = 184.f;
+
+    // Card 1: Warm Golden Amber PROGRESS Card (Battery / Power)
+    PastelCard(cx, gy, cardW, cardH, 20.f, 0xFDE68A, 0xF59E0B, 0xFEF08A);
+    Txt(L"PROGRESS", cx + 22.f, gy + 18.f, 140.f, 20.f, F_SEMI, 11.5f, 700, 0x78350F, 0, 1.f);
+    Glyph((wchar_t)0xE748, cx + cardW - 32.f, gy + 28.f, 13.f, 0x78350F);
+    Txt((std::to_wstring(g_battPct) + L"%").c_str(), cx + 20.f, gy + 42.f, 180.f, 52.f, F_SEMI, 42.f, 700, 0x451A03, 0, 1.f);
+    Txt((g_acLine ? L"AC Connected · Fast charging active" : L"Battery Discharging · Peak Capacity"),
+        cx + 22.f, gy + 96.f, cardW - 44.f, 22.f, F_UI, 12.f, 600, 0x78350F, 0, 1.f);
+    // Progress bar with milestone pin
+    Fill(cx + 22.f, gy + 128.f, cardW - 44.f, 8.f, 4.f, C(0x78350F, 0.20f));
+    float progW = (cardW - 44.f) * ((float)g_battPct / 100.f);
+    Fill(cx + 22.f, gy + 128.f, progW, 8.f, 4.f, C(0x451A03, 0.90f));
+    Disc(cx + 22.f + progW, gy + 132.f, 8.f, C(0x451A03, 0.95f));
+    Disc(cx + 22.f + progW, gy + 132.f, 4.f, C(0xFDE68A, 1.f));
+
+    // Card 2: Coral Sunset TIME Card (Local Time)
+    PastelCard(cx + cardW + 18.f, gy, cardW, cardH, 20.f, 0xFED7AA, 0xF97316, 0xFFEDD5);
+    Txt(L"LOCAL TIME", cx + cardW + 40.f, gy + 18.f, 140.f, 20.f, F_SEMI, 11.5f, 700, 0x7C2D12, 0, 1.f);
+    Glyph((wchar_t)0xE823, cx + cw - 32.f, gy + 28.f, 14.f, 0x7C2D12);
+    Txt(TimeHM(), cx + cardW + 38.f, gy + 42.f, cardW - 60.f, 52.f, F_SEMI, 42.f, 700, 0x431407, 0, 1.f);
+    Txt((DateLong() + L" · " + g_uptime).c_str(), cx + cardW + 40.f, gy + 96.f, cardW - 60.f, 22.f, F_UI, 12.f, 600, 0x7C2D12, 0, 1.f);
+    Txt(L"Precision multimedia timer: 1ms pacing", cx + cardW + 40.f, gy + 126.f, cardW - 60.f, 20.f, F_UI, 11.5f, 500, 0x7C2D12, 0, 0.85f);
+
+    // Card 3: Spring Mint SYSTEM VITALS Card (CPU / RAM / Disk)
+    float g2y = gy + cardH + 18.f;
+    PastelCard(cx, g2y, cardW, cardH, 20.f, 0xBBF7D0, 0x10B981, 0xDCFCE7);
+    Txt(L"SYSTEM VITALS", cx + 22.f, g2y + 18.f, 140.f, 20.f, F_SEMI, 11.5f, 700, 0x064E3B, 0, 1.f);
+    Glyph((wchar_t)0xE945, cx + cardW - 32.f, g2y + 28.f, 14.f, 0x064E3B);
+    Txt((std::to_wstring((int)(g_cpu * 100)) + L"% CPU").c_str(), cx + 20.f, g2y + 42.f, 180.f, 52.f, F_SEMI, 38.f, 700, 0x022C22, 0, 1.f);
+    Txt((L"RAM " + std::to_wstring((int)(g_ram * 100)) + L"% · Disk " + std::to_wstring((int)(g_disk * 100)) + L"% · 0 drops").c_str(),
+        cx + 22.f, g2y + 96.f, cardW - 44.f, 22.f, F_UI, 12.f, 600, 0x064E3B, 0, 1.f);
+    // 3 mini meters
+    float barW = (cardW - 44.f - 16.f) / 3.f;
+    for (int k = 0; k < 3; ++k) {
+        float bxk = cx + 22.f + (barW + 8.f) * (float)k;
+        Fill(bxk, g2y + 128.f, barW, 6.f, 3.f, C(0x064E3B, 0.20f));
+        float kv = (k == 0) ? g_cpu : (k == 1 ? g_ram : g_disk);
+        Fill(bxk, g2y + 128.f, barW * Clamp(kv, 0.f, 1.f), 6.f, 3.f, C(0x022C22, 0.90f));
+    }
+
+    // Card 4: Sky Cyan QUICK SHORTCUTS Card (Interactive real app badges)
+    PastelCard(cx + cardW + 18.f, g2y, cardW, cardH, 20.f, 0xBAE6FD, 0x0EA5E9, 0xE0F2FE);
+    Txt(L"QUICK APPS", cx + cardW + 40.f, g2y + 18.f, 140.f, 20.f, F_SEMI, 11.5f, 700, 0x0369A1, 0, 1.f);
+    Glyph((wchar_t)0xE71D, cx + cw - 32.f, g2y + 28.f, 14.f, 0x0369A1);
+    struct SC { wchar_t glyph; const wchar_t* lbl; };
+    static const SC scs[6] = {
+        { (wchar_t)0xEC50, L"Files" },
+        { (wchar_t)0xE756, L"Terminal" },
+        { (wchar_t)0xE774, L"Browser" },
+        { (wchar_t)0xE713, L"Settings" },
+        { (wchar_t)0xE8EF, L"Calc" },
+        { (wchar_t)0xE740, L"Fullscreen" }
+    };
+    float tileW = (cardW - 44.f - 16.f) / 3.f;
+    float tileH = 46.f;
+    for (int k = 0; k < 6; ++k) {
+        int row = k / 3, col = k % 3;
+        float tx = cx + cardW + 38.f + col * (tileW + 8.f);
+        float ty = g2y + 52.f + row * (tileH + 8.f);
+        bool hov = (g_hover == H_DASH_SHORTCUT + k);
+        Fill(tx, ty, tileW, tileH, 12.f, C(0x0369A1, hov ? 0.28f : 0.14f));
+        if (hov) Stroke(tx, ty, tileW, tileH, 12.f, C(0x0284C7, 0.60f), 1.f);
+        Glyph(scs[k].glyph, tx + tileW * 0.5f, ty + 16.f, 13.f, 0x0369A1);
+        Txt(scs[k].lbl, tx, ty + 24.f, tileW, 18.f, F_SEMI, 10.5f, 600, 0x0369A1, 1, 1.f);
+        AddHit(tx, ty, tileW, tileH, H_DASH_SHORTCUT + k);
+    }
+
+    // -------------------------------------------------------------------------
+    //  Bottom: Dark Frosted Glass LEADERBOARD / COINBASE BITCOIN Card
+    // -------------------------------------------------------------------------
+    float lby = g2y + cardH + 18.f;
+    float lbh = 338.f;
+    Card(cx, lby, cw, lbh, 22.f, 0.62f);
+
+    // Segmented tab pill switcher
+    float tabX = cx + cw - 320.f, tabY = lby + 20.f, tabW = 296.f, tabH = 34.f;
+    Fill(tabX, tabY, tabW, tabH, 17.f, C(WHITE, 0.05f));
+    Stroke(tabX, tabY, tabW, tabH, 17.f, C(WHITE, 0.10f));
+    const wchar_t* tabs[3] = { L"Coinbase", L"24h Trend", L"Market" };
+    float segW = (tabW - 6.f) / 3.f;
+    for (int t = 0; t < 3; ++t) {
+        float sxk = tabX + 3.f + segW * (float)t;
+        bool act = (g_dashTab == t);
+        if (act) {
+            Fill(sxk, tabY + 3.f, segW, tabH - 6.f, 14.f, C(WHITE, 0.16f));
+            Stroke(sxk, tabY + 3.f, segW, tabH - 6.f, 14.f, C(WHITE, 0.22f));
+        }
+        Txt(tabs[t], sxk, tabY + 7.f, segW, 20.f, F_SEMI, 11.5f, act ? 600 : 400, act ? COL_T100 : COL_T50, 1, 1.f);
+        AddHit(sxk, tabY + 3.f, segW, tabH - 6.f, H_DASH_TAB + t);
+    }
+
+    // Title & Globe badge
+    Glyph((wchar_t)0xE774, cx + 34.f, lby + 36.f, 15.f, COL_T90);
+    Txt(L"Leaderboard · Top 1% Global Market Cap", cx + 58.f, lby + 24.f, 380.f, 24.f, F_SEMI, 13.5f, 600, COL_T90, 0, 1.f);
+
+    // Huge bold Bitcoin Price
+    Txt(g_btcPriceStr.c_str(), cx + 24.f, lby + 58.f, 320.f, 48.f, F_SEMI, 36.f, 600, COL_T100, 0, 1.f);
+    unsigned changeCol = (g_btcChangeVal >= 0.f) ? COL_ACC : 0xF87171;
+    // 24h Pill Badge
+    Fill(cx + 26.f, lby + 110.f, 110.f, 26.f, 13.f, C(changeCol, 0.16f));
+    Stroke(cx + 26.f, lby + 110.f, 110.f, 26.f, 13.f, C(changeCol, 0.35f));
+    Txt(g_btcChangeStr.c_str(), cx + 26.f, lby + 114.f, 110.f, 18.f, F_SEMI, 12.f, 600, changeCol, 1, 1.f);
+    Txt(L"24h change · Live REST API via WinHTTP", cx + 146.f, lby + 114.f, 280.f, 18.f, F_UI, 11.5f, 400, COL_T50, 0, 1.f);
+
+    // Live 24-Point Sparkline
+    Sparkline(cx + 26.f, lby + 154.f, cw - 52.f, lbh - 176.f, g_btcSpark, 24, changeCol);
+
+    // =========================================================================
+    //  RIGHT COLUMN: Stacked Floating Frosted Glass Activity Stream
+    // =========================================================================
+    float rx = sx + 1282.f, ry = sy + 24.f, rw = 454.f;
+    Txt(L"Activity", rx + 12.f, ry, 160.f, 28.f, F_SEMI, 17.f, 600, COL_T100, 0, 1.f);
+    Txt(L"Live Feed", rx + rw - 110.f, ry + 4.f, 90.f, 20.f, F_UI, 11.5f, 500, COL_ACC, 2, 1.f);
+
+    struct ActMsg {
+        wchar_t glyph;
+        unsigned glyphCol;
+        std::wstring user;
+        std::wstring time;
+        std::wstring msg;
+        const wchar_t* btn;
+    };
+    ActMsg msgs[5] = {
+        { (wchar_t)0xE946, 0xFBBF24, L"Coinbase Live", L"Just now",
+          (L"Bitcoin ticker updated: " + g_btcPriceStr + L" (" + g_btcChangeStr + L")"), L"View" },
+        { (wchar_t)0xE701, COL_ACC, L"WLAN Telemetry", L"2m ago",
+          (L"Connected to " + g_wifiSSID + L" with " + std::to_wstring(g_wifiSignal) + L"% signal strength."), L"Network" },
+        { (wchar_t)0xE702, 0x60A5FA, L"Bluetooth Radio", L"15m ago",
+          (g_togSub[TOG_BT] + L" paired and connected for audio output."), L"Devices" },
+        { (wchar_t)0xE767, 0xA78BFA, L"Sound Compositor", L"1h ago",
+          (L"Playing Buffy · Ambient Works at " + std::to_wstring((int)(g_vol * 100)) + L"% master volume."), L"Audio" },
+        { (wchar_t)0xE950, COL_ACC, L"Obsidian Compositor", L"3h ago",
+          L"1ms timer locked at 100 Hz frame pacing. Zero hitching.", L"Status" }
+    };
+
+    float m_ay = ry + 36.f;
+    float bubbleH = 166.f;
+    for (int m = 0; m < 5; ++m) {
+        bool hov = (g_hover == H_DASH_ACT + m);
+        GlassBubble(rx + 8.f, m_ay, rw - 16.f, bubbleH, 18.f, hov);
+
+        // Avatar circle
+        Disc(rx + 36.f, m_ay + 36.f, 18.f, C(msgs[m].glyphCol, 0.20f));
+        Glyph(msgs[m].glyph, rx + 36.f, m_ay + 36.f, 13.f, msgs[m].glyphCol);
+
+        // Username + relative time
+        Txt(msgs[m].user.c_str(), rx + 64.f, m_ay + 20.f, rw - 170.f, 22.f, F_SEMI, 13.f, 600, COL_T100, 0, 1.f);
+        Txt(msgs[m].time.c_str(), rx + rw - 110.f, m_ay + 20.f, 80.f, 20.f, F_UI, 11.f, 400, COL_T50, 2, 1.f);
+
+        // Message body
+        Txt(msgs[m].msg.c_str(), rx + 64.f, m_ay + 46.f, rw - 96.f, 44.f, F_UI, 12.f, 400, COL_T80, 0, 0.95f);
+
+        // Action Pill Button (like "Reply" in mockup)
+        Fill(rx + 64.f, m_ay + 104.f, 84.f, 28.f, 14.f, C(WHITE, hov ? 0.12f : 0.05f));
+        if (hov) Stroke(rx + 64.f, m_ay + 104.f, 84.f, 28.f, 14.f, C(WHITE, 0.18f));
+        Txt(msgs[m].btn, rx + 64.f, m_ay + 107.f, 84.f, 22.f, F_SEMI, 11.f, 600, hov ? COL_T100 : COL_T70, 1, 1.f);
+
+        AddHit(rx + 8.f, m_ay, rw - 16.f, bubbleH, H_DASH_ACT + m);
+        m_ay += bubbleH + 16.f;
+    }
+}
+
+static void DrawDesktopWidgets() {
+    DrawSlateDashboard();
 }
 // ============================================================================
 //  Section 3 — shelf, system tray and the unified system bubble
@@ -2630,6 +2954,19 @@ static void UpdateAnimations(float dt) {
         else g_pageA.Step(dt);
     }
 
+    // smooth-scrollbar momentum damping for window scroll
+    for (int i = 0; i < APP_COUNT; ++i) {
+        Win& w = g_win[i];
+        if (!w.open) continue;
+        float diff = w.targetScroll - w.scroll;
+        if (std::fabs(diff) > 0.05f) {
+            float dampingRate = 22.0f;
+            w.scroll += diff * (1.f - std::exp(-dampingRate * dt));
+        } else {
+            w.scroll = w.targetScroll;
+        }
+    }
+
     // Reduce motion: panels arrive fully open instead of sliding, and the
     // wallpaper cross-fade collapses to a cut.
     if (!g_motion) {
@@ -2859,7 +3196,7 @@ static void ScrollWindowAt(float mx, float my, float delta) {
         Win& w = g_win[kind];
         if (!w.open || w.min) continue;
         if (mx >= w.x && mx <= w.x + w.w && my >= w.y && my <= w.y + w.h) {
-            w.scroll = Clamp(w.scroll - delta, 0.f, 600.f);
+            w.targetScroll = Clamp(w.targetScroll - delta, 0.f, 800.f);
             return;
         }
     }
@@ -3052,6 +3389,44 @@ static void HandleClick(int id, float mx, float my) {
     case H_UNLOCK: g_locked = false; ShowToast(L"Welcome back, Buffy", (wchar_t)0xE72E); break;
     case H_SETTINGS: OpenApp(APP_SETTINGS); break;
     case H_POWER: PostMessageW(g_hwnd, WM_CLOSE, 0, 0); break;
+    if (id >= H_DASH_NAV && id < H_DASH_NAV + 5) {
+        g_dashNav = id - H_DASH_NAV;
+        const wchar_t* navNames[5] = { L"Overview", L"Hardware Telemetry", L"Media Works", L"Coinbase Live", L"Notes & Tasks" };
+        wchar_t navGlyphs[5] = { (wchar_t)0xE80F, (wchar_t)0xE950, (wchar_t)0xE8D6, (wchar_t)0xE946, (wchar_t)0xE70B };
+        ShowToast(std::wstring(L"Workspace: ") + navNames[g_dashNav], navGlyphs[g_dashNav]);
+        return;
+    }
+    if (id >= H_DASH_SHORTCUT && id < H_DASH_SHORTCUT + 6) {
+        int sc = id - H_DASH_SHORTCUT;
+        switch (sc) {
+        case 0: LaunchRealApp(APPS[APP_FILES]); break;
+        case 1: LaunchRealApp(APPS[APP_TERM]); break;
+        case 2: LaunchRealApp(APPS[5]); break;
+        case 3: OpenApp(APP_SETTINGS); break;
+        case 4: LaunchRealApp(APPS[17]); break;
+        case 5: ToggleFullscreen(g_hwnd); break;
+        default: break;
+        }
+        return;
+    }
+    if (id >= H_DASH_TAB && id < H_DASH_TAB + 3) {
+        g_dashTab = id - H_DASH_TAB;
+        const wchar_t* tabNames[3] = { L"Coinbase Realtime", L"24h Hourly Trend", L"Market Capitalization" };
+        ShowToast(std::wstring(L"View: ") + tabNames[g_dashTab], (wchar_t)0xE774);
+        return;
+    }
+    if (id >= H_DASH_ACT && id < H_DASH_ACT + 5) {
+        int act = id - H_DASH_ACT;
+        switch (act) {
+        case 0: ShowToast(L"BTC synced: " + g_btcPriceStr, (wchar_t)0xE946); break;
+        case 1: ShowToast(L"Wi-Fi SSID: " + g_wifiSSID, (wchar_t)0xE701); break;
+        case 2: ShowToast(L"Bluetooth: " + g_togSub[TOG_BT], (wchar_t)0xE702); break;
+        case 3: ShowToast(L"Audio: Buffy · Ambient Works", (wchar_t)0xE8D6); break;
+        case 4: ShowToast(L"Hardware timer: 100 Hz cadence", (wchar_t)0xE950); break;
+        default: break;
+        }
+        return;
+    }
     case H_DESK:
         if (g_panel != PANEL_NONE) g_panel = PANEL_NONE;
         g_focus = -1;         // clicking bare desktop blurs the active window
