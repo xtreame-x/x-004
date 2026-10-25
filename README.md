@@ -23,6 +23,8 @@ A high-performance, hardware-accelerated desktop shell for Windows written in na
   - **Live Weather**: Fetches real-time temperature, condition descriptions, and daily highs/lows from `wttr.in` with custom procedural weather glyphs (rain, storm, cloud, sun).
 
 - **Desktop Shell & Productivity**:
+  - **Swipeable Home Pager**: 2-page desktop experience. Page 0 hosts interactive desktop widgets; Page 1 hosts a direct 24-app grid. Supports mouse drag with flick momentum and rubber-band overscroll, touchpad 2-finger horizontal swipes (`WM_MOUSEHWHEEL`), arrow keys, and animated indicator dots.
+  - **Dynamic Text Zoom**: Scale small interface typography on the fly with `Ctrl +`, `Ctrl -`, and `Ctrl 0` (range 90%–150%, default 115%), persisted automatically to `shell.ini`.
   - **App Launcher**: Fullscreen searchable launcher overlay containing 24 curated system apps and utilities with real-time text filtering.
   - **Quick Settings Flyout**: ChromeOS-inspired system tray shelf with Wi-Fi, Bluetooth, Do Not Disturb, Night Light, and Volume controls.
   - **Adaptive Bounds**: DPI-aware layout engine (`shell_layout.h`) ensuring consistent proportions across 16:10 and 16:9 displays without double-scaling bugs.
@@ -69,6 +71,10 @@ UI_shell.exe
 | :--- | :--- |
 | `F11` | Toggle borderless fullscreen mode |
 | `Esc` | Dismiss App Launcher or Quick Settings flyout |
+| `←` / `→` | Switch between Home Screen pages (Widgets / Apps) |
+| `Swipe / Drag` | Smooth horizontal drag or 2-finger touchpad swipe between pages |
+| `Ctrl +` / `Ctrl -` | Increase / decrease interface text size (90% – 150%) |
+| `Ctrl 0` | Reset interface text size to 115% |
 | `Click Shelf Clock` | Toggle Quick Settings flyout |
 | `Click Launcher Pill` | Open searchable Application Launcher |
 | `Type in Launcher` | Real-time filter apps |

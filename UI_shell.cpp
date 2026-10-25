@@ -202,6 +202,12 @@ static const wchar_t* F_MONO = L"Consolas";
 static const wchar_t* F_ICON = L"Segoe MDL2 Assets";
 
 // align: 0 = leading, 1 = center, 2 = trailing
+// Interface text size in percent. Only text smaller than 20 design px is scaled
+// (labels, rows, captions); big display numerals and icon glyphs are left alone.
+// Ctrl + / Ctrl - / Ctrl 0 change it at runtime.
+static int   g_textPct = 115;
+static const int TEXT_PCT_MIN = 90, TEXT_PCT_MAX = 150, TEXT_PCT_DEFAULT = 115;
+
 static IDWriteTextFormat* Fmt(const wchar_t* font, float size, int weight, int align) {
     std::wstring key = std::wstring(font) + L"|" + std::to_wstring((int)(size * 10.f)) + L"|" +
                        std::to_wstring(weight) + L"|" + std::to_wstring(align);
@@ -234,6 +240,7 @@ static void Txt(const std::wstring& s, float x, float y, float w, float h,
                 const wchar_t* font, float size, int weight, unsigned rgb,
                 int align = 0, float alpha = 1.f) {
     if (s.empty()) return;
+    if (size < 20.f && std::wcscmp(font, F_ICON) != 0) size *= (float)g_textPct / 100.f;
     IDWriteTextFormat* f = Fmt(font, size, weight, align);
     if (!f) return;
     g_br->SetColor(C(rgb, alpha));
@@ -313,8 +320,6 @@ static const wchar_t* TOG_NAME[TOG_COUNT] = { L"Wi-Fi", L"Bluetooth", L"Do not d
                                               L"Night light", L"Nearby share", L"Battery saver" };
 static std::wstring   g_togSub[TOG_COUNT] = { L"Scanning...", L"Off", L"Muted alerts",
                                               L"Warm tint", L"Visible to contacts", L"Until 08:00" };
-static const wchar_t  TOG_GLYPH[TOG_COUNT] = { (wchar_t)0xE701, (wchar_t)0xE702, (wchar_t)0xE708,
-                                               (wchar_t)0xE706, (wchar_t)0xE703, (wchar_t)0xE83F };
 
 // Live Wi-Fi & Bluetooth variables
 static std::wstring g_wifiSSID = L"Wi-Fi";
@@ -342,6 +347,8 @@ static std::mutex   g_weatherLock;
 // Background worker thread control
 static std::atomic<bool> g_netRunning(true);
 static std::thread       g_netThread;
+static const wchar_t  TOG_GLYPH[TOG_COUNT] = { (wchar_t)0xE701, (wchar_t)0xE702, (wchar_t)0xE708,
+                                               (wchar_t)0xE706, (wchar_t)0xE703, (wchar_t)0xE83F };
 
 static float g_vol = 0.72f, g_bri = 0.85f;
 static bool  g_playing = true;
@@ -371,6 +378,35 @@ static int   g_setPage = 0;                     // Settings: 0 System, 1 Appeara
 enum { PANEL_NONE = 0, PANEL_SYS, PANEL_LAUNCH };
 static int  g_panel = PANEL_NONE;
 static Anim g_sysA, g_launchA, g_lockA, g_ctxA, g_wpFade;
+
+// ---- Home pager (mobile-style swipe between home screens) -------------------
+// Page 0 = widgets, page 1 = app grid. g_pageA.x is the live position in pages
+// (0.0 .. HOME_PAGES-1); it follows the pointer while dragging and springs to
+// g_page on release.
+static const int HOME_PAGES = 2;
+static int    g_page = 0;                       // page we are settling on
+static Anim   g_pageA;                          // animated page position
+static bool   g_pdown = false;                  // pointer pressed on the home screen
+static bool   g_pdrag = false;                  // ... and has become a swipe
+static int    g_pdid = 0;                       // hit id under the press
+static float  g_pdx0 = 0.f, g_pdy0 = 0.f;       // press point (design space)
+static float  g_pstartPos = 0.f;                // g_pageA.x at press
+static float  g_pvx = 0.f;                      // smoothed swipe velocity (design px/s)
+static float  g_plastX = 0.f;
+static double g_plastT = 0.0;
+static float  g_pageDX = 0.f;                   // x offset of the page being drawn
+// Two-finger touchpad swipe (WM_MOUSEHWHEEL). A gesture = a run of events with
+// no gap longer than ~150 ms (that includes the touchpad's inertia tail).
+static const float HSWIPE_DIR = 1.f;            // set to -1.f if the swipe feels reversed
+static bool   g_hg = false;                     // gesture in progress
+static bool   g_hlock = false;                  // page already flipped in this gesture
+static float  g_hacc = 0.f;                     // summed wheel delta of the gesture
+static int    g_hbase = 0;                      // page the gesture started on
+static double g_hlastT = 0.0;
+static void GoPage(int p) {
+    g_page = p < 0 ? 0 : (p > HOME_PAGES - 1 ? HOME_PAGES - 1 : p);
+    g_pageA.To((float)g_page);
+}
 static int  g_launchPage = 0;
 static int  g_launchSel = -1;
 static bool g_ctxOpen = false;
@@ -412,7 +448,9 @@ enum {
     H_SET_RESET = 799,
     H_CTX = 800,                             // + item
     H_UNLOCK = 850, H_FILE = 870,            // + row
-    H_DESK = 900
+    H_DESK = 900,
+    H_HAPP = 1000,                           // + index (home-screen app tiles)
+    H_HDOT = 1050                            // + page  (home page dots)
 };
 enum { WP_BODY = 0, WP_TITLE = 1, WP_CLOSE = 2, WP_MIN = 3, WP_MAX = 4,
        WP_RIGHT = 5, WP_BOTTOM = 6, WP_CORNER = 7 };
@@ -519,6 +557,8 @@ static void SaveSettings() {
     }
     swprintf(num, 32, L"%d", g_sizeIdx);
     WritePrivateProfileStringW(L"shell", L"widgetsize", num, p.c_str());
+    swprintf(num, 32, L"%d", g_textPct);
+    WritePrivateProfileStringW(L"shell", L"textpct", num, p.c_str());
     for (int i = 0; i < shelllayout::W_COUNT; ++i) {
         wchar_t key[16];
         swprintf(key, 16, L"w%d", i);
@@ -545,6 +585,8 @@ static void LoadSettings() {
     g_sizeIdx = GetPrivateProfileIntW(L"shell", L"widgetsize", 1, p.c_str());
     if (g_sizeIdx < 0 || g_sizeIdx >= ns) g_sizeIdx = 1;
     g_widgetScale = scales[g_sizeIdx];
+    g_textPct = GetPrivateProfileIntW(L"shell", L"textpct", TEXT_PCT_DEFAULT, p.c_str());
+    if (g_textPct < TEXT_PCT_MIN || g_textPct > TEXT_PCT_MAX) g_textPct = TEXT_PCT_DEFAULT;
 
     for (int i = 0; i < shelllayout::W_COUNT; ++i) {
         wchar_t key[16];
@@ -689,7 +731,7 @@ static void DrawWallpaper() {
         // Very slow drift keeps the wallpaper feeling alive without noise;
         // "reduce motion" freezes it instead of removing the light pool.
         float t = g_motion ? (float)g_clockT : 0.f;
-        g_glow->SetCenter(D2D1::Point2F(DW * 0.66f + std::sin(t * 0.06f) * 90.f,
+        g_glow->SetCenter(D2D1::Point2F(DW * 0.66f - g_pageA.x * 160.f + std::sin(t * 0.06f) * 90.f,
                                         DH * 0.16f + std::cos(t * 0.045f) * 46.f));
         g_glow->SetOpacity(0.55f + 0.45f * g_wpFade.x);
         g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_glow);
@@ -1001,13 +1043,14 @@ static const wchar_t* WIDGET_NAME[shelllayout::W_COUNT] = {
 template <class F>
 static void InWidget(float x, float y, float s, F fn) {
     g_hitX.s = s;
-    g_hitX.tx = x;
+    g_hitX.tx = x + g_pageDX;
     g_hitX.ty = y;
     g_rt->SetTransform(D2D1::Matrix3x2F::Scale(s, s) *
-                       D2D1::Matrix3x2F::Translation(x, y) * g_base);
+                       D2D1::Matrix3x2F::Translation(x + g_pageDX, y) * g_base);
     fn();
     g_hitX = shelllayout::Xform();
-    g_rt->SetTransform(g_base);
+    g_hitX.tx = g_pageDX;
+    g_rt->SetTransform(D2D1::Matrix3x2F::Translation(g_pageDX, 0.f) * g_base);
 }
 
 static void DrawDesktopWidgets() {
@@ -1587,6 +1630,7 @@ static void ResetAppearance() {
     const float* scales = shelllayout::Scales(ns);
     g_sizeIdx = 1;
     g_widgetScale = scales[1];
+    g_textPct = TEXT_PCT_DEFAULT;
     for (int i = 0; i < shelllayout::W_COUNT; ++i) g_widgetOn[i] = true;
     g_clock24 = false;
     g_motion = true;
@@ -2202,7 +2246,8 @@ static void NetWorkerThread() {
 }
 
 // ----------------------------------------------------------------------------
-//  Real machine data: battery, CPU load, memory, disk, uptime, Wi-Fi, Bluetooth.
+//  Real machine data: battery, CPU load, memory, disk, uptime, Wi-Fi, Bluetooth. Pure
+//  Win32 (no WMI, no extra libraries); CPU load is a delta of GetSystemTimes.
 // ----------------------------------------------------------------------------
 static void SampleSystem() {
     static int netTicks = 0;
@@ -2261,6 +2306,17 @@ static void UpdateAnimations(float dt) {
     g_launchA.To(g_panel == PANEL_LAUNCH ? 1.f : 0.f);
     g_ctxA.To(g_ctxOpen ? 1.f : 0.f);
     g_lockA.To(g_locked ? 1.f : 0.f);
+    if (g_hg && NowSec() - g_hlastT > 0.15) {    // touchpad gesture finished
+        g_hg = false;
+        g_hlock = false;
+        g_hacc = 0.f;
+        GoPage(g_page);                          // spring back if it never reached the threshold
+    }
+    if (!g_pdrag && !(g_hg && !g_hlock)) {       // while swiping the input owns the position
+        g_pageA.To((float)g_page);
+        if (!g_motion) g_pageA.Set(g_pageA.target);
+        else g_pageA.Step(dt, 14.f);
+    }
 
     // Reduce motion: panels arrive fully open instead of sliding, and the
     // wallpaper cross-fade collapses to a cut.
@@ -2327,6 +2383,87 @@ static void EnsureTarget() {
     g_wpFade.Set(1.f);
 }
 
+// ----------------------------------------------------------------------------
+//  Home pager: page 1 (apps), page dots, and the page strip itself
+// ----------------------------------------------------------------------------
+// Everything that may start a swipe: the bare desktop, app tiles and the
+// widgets' buttons / note rows (a press that doesn't move is still a tap).
+// Sliders are excluded - horizontal drags belong to them.
+static bool PagerHit(int id) {
+    return id == H_DESK || (id >= H_HAPP && id < H_HAPP + APP_N) ||
+           (id >= H_NOTE && id < H_NOTE + 20) || id == H_ADDNOTE ||
+           (id >= H_PREV && id <= H_REPEAT && id != H_SEEK);
+}
+static bool PagerAreaHit(int id) {
+    return PagerHit(id) || (id >= H_HDOT && id < H_HDOT + HOME_PAGES);
+}
+// Resistance past the first / last page, like an iOS / Android overscroll.
+static float RubberPos(float p) {
+    const float hi = (float)(HOME_PAGES - 1);
+    if (p < 0.f) return p * 0.35f;
+    if (p > hi) return hi + (p - hi) * 0.35f;
+    return p;
+}
+static void HomeAppTap(int i) {
+    if (i < 0 || i >= APP_N) return;
+    const AppDef& a = APPS[i];
+    if (a.kind >= 0) OpenApp(a.kind);
+    else ShowToast(std::wstring(L"Opening ") + a.name + L"\u2026", a.glyph ? a.glyph : (wchar_t)0xE756);
+}
+
+static void DrawHomeApps() {
+    const int cols = 6;
+    const float cellW = 240.f, cellH = 222.f;
+    const float x0 = (DW - (float)cols * cellW) * 0.5f, y0 = 150.f;
+    Txt(L"Apps", x0, 76.f, 300.f, 30.f, F_SEMI, 16.f, 600, COL_T90, 0, 1.f);
+    Txt(std::to_wstring(APP_N) + L" installed", x0 + (float)cols * cellW - 300.f, 76.f, 300.f, 30.f,
+        F_UI, 12.f, 400, COL_T35, 2, 1.f);
+    for (int i = 0; i < APP_N; ++i) {
+        float cx = x0 + (float)(i % cols) * cellW + cellW * 0.5f;
+        float cy = y0 + (float)(i / cols) * cellH + 64.f;
+        bool hov = (g_hover == H_HAPP + i) && !g_pdrag;
+        if (hov) Fill(cx - 100.f, cy - 72.f, 200.f, 190.f, 24.f, C(WHITE, 0.05f));
+        AppIcon(APPS[i], cx, cy, 96.f, 38.f, hov);
+        Txt(APPS[i].name, cx - 100.f, cy + 60.f, 200.f, 30.f, F_UI, 13.f, 500,
+            hov ? COL_T100 : COL_T70, 1, 1.f);
+        AddHit(cx - 100.f, cy - 72.f, 200.f, 190.f, H_HAPP + i);
+    }
+}
+
+static void DrawPageDots() {
+    if (HOME_PAGES < 2) return;
+    const float cy = 1066.f, step = 22.f;
+    const float total = step * (float)(HOME_PAGES - 1);
+    for (int p = 0; p < HOME_PAGES; ++p) {
+        float cx = DW * 0.5f - total * 0.5f + (float)p * step;
+        float prox = 1.f - std::min(1.f, std::fabs((float)p - g_pageA.x));
+        float a = Clamp(0.22f + 0.73f * prox + ((g_hover == H_HDOT + p) ? 0.2f : 0.f), 0.f, 1.f);
+        Disc(cx, cy, 3.2f + 1.8f * prox, C(prox > 0.5f ? COL_T90 : WHITE, a));
+        AddHit(cx - 12.f, cy - 12.f, 24.f, 24.f, H_HDOT + p);
+    }
+}
+
+// Draws every visible page side by side, shifted by the live page position.
+static void DrawHomePages() {
+    g_rt->SetTransform(g_base);
+    g_rt->PushAxisAlignedClip(R(0.f, 0.f, DW, DH), D2D1_ANTIALIAS_MODE_ALIASED);
+    for (int p = 0; p < HOME_PAGES; ++p) {
+        float dx = ((float)p - g_pageA.x) * DW;
+        if (dx <= -DW || dx >= DW) continue;     // fully off-screen: skip
+        g_pageDX = dx;
+        g_hitX = shelllayout::Xform();
+        g_hitX.tx = dx;
+        g_rt->SetTransform(D2D1::Matrix3x2F::Translation(dx, 0.f) * g_base);
+        if (p == 0) DrawDesktopWidgets();
+        else DrawHomeApps();
+    }
+    g_pageDX = 0.f;
+    g_hitX = shelllayout::Xform();
+    g_rt->SetTransform(g_base);
+    g_rt->PopAxisAlignedClip();
+    DrawPageDots();
+}
+
 static void Render() {
     EnsureTarget();
     if (!g_rt || !g_br) return;
@@ -2340,7 +2477,7 @@ static void Render() {
 
     DrawWallpaper();
     AddHit(0.f, 0.f, DW, DH, H_DESK);
-    DrawDesktopWidgets();
+    DrawHomePages();
     for (size_t i = 0; i < g_z.size(); ++i) DrawWindow(g_z[i]);
     DrawSnapHint();
     DrawShelf();
@@ -2567,6 +2704,9 @@ static void HandleClick(int id, float mx, float my) {
         return;
     }
 
+    if (id >= H_HAPP && id < H_HAPP + APP_N) { g_panel = PANEL_NONE; return; }   // click-away while a panel is open
+    if (id >= H_HDOT && id < H_HDOT + HOME_PAGES) { GoPage(id - H_HDOT); return; }
+
     // --- named controls ------------------------------------------------------
     (void)mx; (void)my;
     switch (id) {
@@ -2624,6 +2764,16 @@ static void OnKeyDown(WPARAM vk) {
     if (vk == VK_F11) { ToggleFullscreen(g_hwnd); return; }
     if (ctrl && (vk == 'Q')) { PostMessageW(g_hwnd, WM_CLOSE, 0, 0); return; }
 
+    // Ctrl + / Ctrl - / Ctrl 0: interface text size (like a browser's zoom).
+    if (ctrl && (vk == VK_OEM_PLUS || vk == VK_ADD || vk == VK_OEM_MINUS || vk == VK_SUBTRACT || vk == '0' || vk == VK_NUMPAD0)) {
+        if (vk == '0' || vk == VK_NUMPAD0) g_textPct = TEXT_PCT_DEFAULT;
+        else if (vk == VK_OEM_PLUS || vk == VK_ADD) g_textPct = std::min(TEXT_PCT_MAX, g_textPct + 5);
+        else g_textPct = std::max(TEXT_PCT_MIN, g_textPct - 5);
+        ShowToast(L"Text size " + std::to_wstring(g_textPct) + L"%", (wchar_t)0xE8E9);
+        SaveSettings();
+        return;
+    }
+
     if (g_locked) {
         if (vk == VK_RETURN || vk == VK_ESCAPE || vk == VK_SPACE) {
             g_locked = false;
@@ -2647,6 +2797,11 @@ static void OnKeyDown(WPARAM vk) {
             g_launchPage = 0;
             g_launchSel = -1;
         }
+        return;
+    }
+
+    if ((vk == VK_LEFT || vk == VK_RIGHT) && g_panel == PANEL_NONE && g_focus < 0 && !g_ctxOpen) {
+        GoPage(g_page + (vk == VK_RIGHT ? 1 : -1));
         return;
     }
 
@@ -2837,6 +2992,28 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(h, nullptr, FALSE);
             return 0;
         }
+        if (g_pdown) {
+            double now = NowSec();
+            float dx = mx - g_pdx0, dy = my - g_pdy0;
+            if (!g_pdrag && std::fabs(dx) > 14.f && std::fabs(dx) > std::fabs(dy)) {
+                g_pdrag = true;                  // horizontal intent: this is a swipe, not a tap
+                g_hover = H_NONE;
+                g_pvx = 0.f;
+                g_plastX = mx;
+                g_plastT = now;
+            }
+            if (g_pdrag) {
+                g_pageA.Set(RubberPos(g_pstartPos - dx / DW));
+                float dt = (float)(now - g_plastT);
+                if (dt > 0.0005f) {
+                    g_pvx = g_pvx * 0.55f + ((mx - g_plastX) / dt) * 0.45f;
+                    g_plastX = mx;
+                    g_plastT = now;
+                }
+                InvalidateRect(h, nullptr, FALSE);
+                return 0;
+            }
+        }
         int id = HitTest(mx, my);
         if (id != g_hover) {
             g_hover = id;
@@ -2858,6 +3035,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             } else if (IsClickableId(id)) {
                 cur = IDC_HAND;
             }
+            if (g_pdrag) cur = IDC_SIZEWE;
             SetCursor(LoadCursorW(nullptr, cur));
             return TRUE;
         }
@@ -2905,6 +3083,22 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
+        if (g_panel == PANEL_NONE && PagerHit(id)) {
+            // Might become a swipe: remember where it started. App tiles are
+            // activated on release (a tap), the bare desktop on press as before.
+            g_pdown = true;
+            g_pdrag = false;
+            g_pdid = id;
+            g_pdx0 = mx;
+            g_pdy0 = my;
+            g_pstartPos = g_pageA.x;
+            g_pvx = 0.f;
+            SetCapture(h);
+            if (id == H_DESK) HandleClick(id, mx, my);
+            InvalidateRect(h, nullptr, FALSE);
+            return 0;
+        }
+
         HandleClick(id, mx, my);
         InvalidateRect(h, nullptr, FALSE);
         return 0;
@@ -2929,8 +3123,40 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         g_dragWin = -1;
         g_dragPart = 0;
         g_dragSlider = -1;
+        if (g_pdown) {                           // capture stolen mid-swipe: just settle
+            bool was = g_pdrag;
+            g_pdown = false;
+            g_pdrag = false;
+            if (was) GoPage((int)std::floor(g_pageA.x + 0.5f));
+        }
         return 0;
     case WM_LBUTTONUP:
+        if (g_pdown) {
+            float mx, my;
+            ToDesign(lp, mx, my);
+            const bool wasDrag = g_pdrag;
+            const int did = g_pdid;
+            if (wasDrag) {
+                float v = g_pvx;
+                if (NowSec() - g_plastT > 0.08) v = 0.f;           // finger rested before lifting
+                const float dx = mx - g_pdx0;
+                const int base = (int)std::floor(g_pstartPos + 0.5f);
+                float proj = g_pageA.x - v * 0.18f / DW;           // where momentum would carry it
+                int target = (int)std::floor(proj + 0.5f);
+                if (std::fabs(v) > 700.f && std::fabs(dx) > 40.f)  // quick flick = always one page
+                    target = base + (v < 0.f ? 1 : -1);
+                g_pdown = false;
+                g_pdrag = false;
+                GoPage(target);
+            } else {
+                g_pdown = false;
+                if (HitTest(mx, my) == did) {                      // released where it was pressed = tap
+                    if (did >= H_HAPP && did < H_HAPP + APP_N) HomeAppTap(did - H_HAPP);
+                    else if (did != H_DESK) HandleClick(did, mx, my);
+                }
+            }
+            ReleaseCapture();
+        }
         if (g_dragSlider >= 0) { g_dragSlider = -1; ReleaseCapture(); SaveSettings(); }
         if (g_dragWin >= 0) {
             int kind = g_dragWin;
@@ -2959,7 +3185,36 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         ScreenToClient(h, &p);
         float mx, my;
         ToDesignXY(p.x, p.y, mx, my);
-        ScrollWindowAt(mx, my, (float)GET_WHEEL_DELTA_WPARAM(wp) / 120.f * 60.f);
+        if (!g_locked && g_panel == PANEL_NONE && PagerAreaHit(HitTest(mx, my))) {
+            static double lastWheel = 0.0;           // one page per wheel flick
+            double now = NowSec();
+            int d = GET_WHEEL_DELTA_WPARAM(wp);
+            if (d != 0 && now - lastWheel > 0.25) {
+                GoPage(g_page + (d < 0 ? 1 : -1));
+                lastWheel = now;
+            }
+        } else {
+            ScrollWindowAt(mx, my, (float)GET_WHEEL_DELTA_WPARAM(wp) / 120.f * 60.f);
+        }
+        InvalidateRect(h, nullptr, FALSE);
+        return 0;
+    }
+    case WM_MOUSEHWHEEL: {                           // two-finger sideways swipe on a touchpad
+        if (g_locked || g_panel != PANEL_NONE || g_ctxOpen || g_pdown) return 0;
+        const float T = 240.f;                       // wheel units that make a full page flip
+        double now = NowSec();
+        if (!g_hg) { g_hg = true; g_hlock = false; g_hacc = 0.f; g_hbase = g_page; }
+        g_hlastT = now;
+        if (!g_hlock) {
+            g_hacc += (float)GET_WHEEL_DELTA_WPARAM(wp) * HSWIPE_DIR;
+            if (std::fabs(g_hacc) >= T) {
+                GoPage(g_hbase + (g_hacc > 0.f ? 1 : -1));
+                g_hlock = true;                      // one page per gesture; inertia tail is ignored
+            } else {
+                // Peek: the page leans with the fingers until the flip threshold.
+                g_pageA.Set(RubberPos((float)g_hbase + g_hacc / T * 0.22f));
+            }
+        }
         InvalidateRect(h, nullptr, FALSE);
         return 0;
     }
@@ -3048,6 +3303,8 @@ static_assert(H_SET_RESET < H_CTX, "settings ids overlap the context menu");
 static_assert(H_CTX + 16 <= H_UNLOCK, "context menu overlaps the unlock region");
 static_assert(H_UNLOCK < H_FILE, "unlock region overlaps file rows");
 static_assert(H_FILE + FILE_N + 4 <= H_DESK, "file rows overlap the desktop");
+static_assert(H_DESK < H_HAPP && H_HAPP + APP_N <= H_HDOT, "home app tiles overlap other ids");
+static_assert(H_HDOT + HOME_PAGES <= 1100, "home page dots overlap other ids");
 
 // ----------------------------------------------------------------------------
 //  Entry point
