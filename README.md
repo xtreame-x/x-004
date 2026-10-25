@@ -6,11 +6,18 @@ A high-performance, hardware-accelerated desktop shell for Windows written in na
 
 ## ✨ Features
 
-- **Obsidian Monolith Aesthetic**:
+- **Obsidian Monolith Aesthetic & Frosted Glassmorphism**:
   - Precision dark metallic gradient palette (`#090A0D` → `#111317` → `#181B22` → `#0D0E12`).
-  - Translucent glassmorphism cards with 5–15% white borders and subtle drop-shadows.
+  - **Dark Frosted Glass Transparency**: Translucent dark charcoal base (`rgba(14, 17, 24, 0.52)`), upper ambient specular sheen reflection (`rgba(255, 255, 255, 0.038)`), 1px beveled glass rim perimeter (`rgba(255, 255, 255, 0.13)`), razor-sharp top edge highlight hairline (`rgba(255, 255, 255, 0.22)`), and deep ambient drop-shadow.
   - Active emerald accent badges (`#34D399` / `#10B981`) for battery and market indicators.
   - Crisp typography rendered via hardware-accelerated **DirectWrite**.
+
+- **Custom Wallpaper Engine & Preset Gallery**:
+  - **Native WIC Decoder**: Integrates Windows Imaging Component (`IWICImagingFactory`) to load and aspect-fill any `.jpg`, `.jpeg`, `.png`, `.bmp`, or `.webp` image directly into Direct2D bitmaps (`ID2D1Bitmap`).
+  - **Bundled Preset 0 (Misty Castle)**: Packaged atmospheric fantasy landscape (`wallpaper_glass.jpg`) paired with dark frosted glass cards.
+  - **Custom Image File Picker**: Select any custom image from disk via the native Windows Open File dialog (`GetOpenFileNameW`) in **Settings -> Appearance** or via the desktop context menu.
+  - **Desktop Right-Click Context Menu**: Right-click anywhere on the empty desktop canvas to quickly select "Choose wallpaper...", "Open Settings", or toggle fullscreen.
+  - **Cross-Fade Transitions & Persistence**: Smooth animated cross-fades when changing wallpapers, automatically saved to `shell.ini` via `custom_wp` and `wallpaper`.
 
 - **Live Hardware & OS Telemetry**:
   - **Native Wi-Fi**: Directly calls Windows WLAN API (`wlanapi.h`) to detect the active SSID and actual Wi-Fi signal quality percentage.
@@ -54,7 +61,8 @@ Or run `g++` directly:
 
 ```bash
 g++ -std=c++17 -O2 -s -mwindows -static UI_shell.cpp -o UI_shell.exe \
-    -ld2d1 -ldwrite -luser32 -lgdi32 -lwinhttp -lwlanapi -lbthprops -lshell32
+    -ld2d1 -ldwrite -luser32 -lgdi32 -lwinhttp -lwlanapi -lbthprops \
+    -lshell32 -lwinmm -lole32 -lwindowscodecs -lcomdlg32
 ```
 
 ### Running
@@ -72,9 +80,10 @@ UI_shell.exe
 | Key / Action | Description |
 | :--- | :--- |
 | `F11` | Toggle borderless fullscreen mode |
-| `Esc` | Dismiss App Launcher or Quick Settings flyout |
+| `Esc` | Dismiss App Launcher, Settings, or Quick Settings flyout |
 | `←` / `→` | Switch between Home Screen pages (Widgets / Apps) |
 | `Swipe / Drag` | Smooth horizontal drag or 2-finger touchpad swipe between pages |
+| `Right-Click Desktop` | Open context menu (Choose wallpaper, Settings, Fullscreen) |
 | `Ctrl +` / `Ctrl -` | Increase / decrease interface text size (90% – 150%) |
 | `Ctrl 0` | Reset interface text size to 115% |
 | `Click Shelf Clock` | Toggle Quick Settings flyout |

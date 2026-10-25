@@ -74,6 +74,8 @@
 #include <bluetoothapis.h>
 #include <shellapi.h>
 #include <mmsystem.h>
+#include <wincodec.h>
+#include <commdlg.h>
 
 #include "shell_layout.h"
 
@@ -87,6 +89,9 @@
 #pragma comment(lib, "bthprops.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "winmm.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "windowscodecs.lib")
+#pragma comment(lib, "comdlg32.lib")
 #endif
 
 // ----------------------------------------------------------------------------
@@ -141,14 +146,16 @@ static const unsigned COL_ACC_BG = 0x10B981;    // 10% accents only
 
 // Wallpaper presets. Each is a 3-stop vertical gradient; preset 0 is the
 // original #090A0D → #181B22 → #0D0E12 spec.
-struct WpPreset { unsigned a, b, c, glow; const wchar_t* name; };
+struct WpPreset { unsigned a, b, c, glow; const wchar_t* name; const wchar_t* file; };
 static const WpPreset WP[] = {
-    { 0x090A0D, 0x181B22, 0x0D0E12, 0x2A3340, L"Obsidian" },   // the spec
-    { 0x060F12, 0x0E2429, 0x05090B, 0x123A38, L"Deep teal" },
-    { 0x0A0A0C, 0x1C1C20, 0x08080A, 0x33333A, L"Graphite" },
-    { 0x090A16, 0x191A33, 0x07070E, 0x24265A, L"Indigo" },
-    { 0x0B0A08, 0x211B12, 0x0A0806, 0x3A2C16, L"Ember" },
-    { 0x070C0A, 0x14251E, 0x050B08, 0x1E4034, L"Forest" },
+    { 0x090A0D, 0x181B22, 0x0D0E12, 0x2A3340, L"Misty Castle (Glass)", L"wallpaper_glass.jpg" },
+    { 0x090A0D, 0x181B22, 0x0D0E12, 0x2A3340, L"Obsidian Void",        nullptr },
+    { 0x060F12, 0x0E2429, 0x05090B, 0x123A38, L"Deep Teal",           nullptr },
+    { 0x0A0A0C, 0x1C1C20, 0x08080A, 0x33333A, L"Graphite Noir",       nullptr },
+    { 0x090A16, 0x191A33, 0x07070E, 0x24265A, L"Indigo Nebula",       nullptr },
+    { 0x0B0A08, 0x211B12, 0x0A0806, 0x3A2C16, L"Ember Glow",          nullptr },
+    { 0x070C0A, 0x14251E, 0x050B08, 0x1E4034, L"Emerald Forest",      nullptr },
+    { 0x080A0D, 0x141820, 0x10141C, 0x344055, L"Custom Picture...",    L"" },
 };
 static const int WP_COUNT = (int)(sizeof(WP) / sizeof(WP[0]));
 
@@ -189,12 +196,24 @@ static void Shadow(float x, float y, float w, float h, float r, float strength =
              C(BLACK, strength * k));
     }
 }
-// Elevated glass card: surface fill + hairline + top highlight + shadow.
-static void Card(float x, float y, float w, float h, float r, float alpha = 0.82f, bool shadow = true) {
-    if (shadow) Shadow(x, y, w, h, r);
-    Fill(x, y, w, h, r, C(COL_SURF, alpha));
-    Stroke(x, y, w, h, r, C(WHITE, 0.055f));
-    Line(x + r * 0.6f, y + 1.f, x + w - r * 0.6f, y + 1.f, C(WHITE, 0.045f));
+// Elevated frosted glass card: translucent tinted glass + ambient upper sheen + specular bevel rim + deep shadow.
+static void Card(float x, float y, float w, float h, float r, float alpha = 0.52f, bool shadow = true) {
+    if (w <= 0.f || h <= 0.f) return;
+    if (shadow) Shadow(x, y, w, h, r, 0.12f, 10);
+    // 1. Frosted translucent base (allows wallpaper details to show through)
+    Fill(x, y, w, h, r, C(0x0E1118, alpha));
+    // 2. Subtle glass surface sheen: top ambient light reflection
+    float sheenH = std::min(h * 0.45f, 96.f);
+    if (sheenH > 4.f) {
+        g_rt->PushAxisAlignedClip(R(x, y, w, h), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        Fill(x, y, w, sheenH, r, C(WHITE, 0.038f));
+        g_rt->PopAxisAlignedClip();
+    }
+    // 3. Crisp optical glass rim (light catching the polished beveled edge)
+    Stroke(x, y, w, h, r, C(WHITE, 0.13f), 1.0f);
+    // 4. Razor-sharp specular highlight hairline along the top edge
+    float inset = std::min(r * 0.65f, 18.f);
+    Line(x + inset, y + 1.f, x + w - inset, y + 1.f, C(WHITE, 0.22f), 1.0f);
 }
 
 // ----------------------------------------------------------------------------
@@ -491,6 +510,7 @@ static std::wstring g_uptime = L"up 0h 0m";
 static ULONGLONG    g_prevIdle = 0, g_prevKernel = 0, g_prevUser = 0;
 static float g_pos = 84.f, g_dur = 228.f;      // media position seconds
 static int   g_wp = 0;                          // wallpaper preset index
+static std::wstring g_customWpPath = L"wallpaper_glass.jpg";
 
 // Desktop widgets: which ones are shown, and how large. Both live in the
 // Appearance page of Settings and are persisted.
@@ -570,6 +590,7 @@ enum {
     H_WIN = 700,                             // + kind*8 + part
     H_SET_NAV = 760,                         // + page          (Settings tabs)
     H_SET_WP = 770,                          // + preset        (wallpaper swatches)
+    H_SET_CUSTOM_WP = 778,                   // choose custom image button
     H_SET_SIZE = 780,                        // + index         (widget size)
     H_SET_WIDGET = 785,                      // + widget        (visibility)
     H_SET_MISC = 796,                        // + 0 clock, +1 motion
@@ -685,6 +706,7 @@ static void SaveSettings() {
     WritePrivateProfileStringW(L"shell", L"bri", num, p.c_str());
     swprintf(num, 32, L"%d", g_wp);
     WritePrivateProfileStringW(L"shell", L"wallpaper", num, p.c_str());
+    WritePrivateProfileStringW(L"shell", L"custom_wp", g_customWpPath.c_str(), p.c_str());
     for (int i = 0; i < TOG_COUNT; ++i) {
         wchar_t key[16];
         swprintf(key, 16, L"tog%d", i);
@@ -707,6 +729,9 @@ static void LoadSettings() {
     std::wstring p = SettingsPath();
     g_vol = Clamp(GetPrivateProfileIntW(L"shell", L"vol", 72, p.c_str()) / 100.f, 0.f, 1.f);
     g_bri = Clamp(GetPrivateProfileIntW(L"shell", L"bri", 85, p.c_str()) / 100.f, 0.f, 1.f);
+    wchar_t cwp[MAX_PATH] = L"";
+    GetPrivateProfileStringW(L"shell", L"custom_wp", L"wallpaper_glass.jpg", cwp, MAX_PATH, p.c_str());
+    g_customWpPath = cwp;
     g_wp  = GetPrivateProfileIntW(L"shell", L"wallpaper", 0, p.c_str()) % WP_COUNT;
     if (g_wp < 0) g_wp = 0;
     for (int i = 0; i < TOG_COUNT; ++i) {
@@ -789,6 +814,60 @@ static void ResetWindow(int kind);
 
 static ID2D1LinearGradientBrush* g_scrim = nullptr;   // bottom scrim for legibility
 
+static IWICImagingFactory* g_wicFactory = nullptr;
+static ID2D1Bitmap*        g_wpBitmap = nullptr;
+static ID2D1Bitmap*        g_wpOldBitmap = nullptr;
+
+static ID2D1Bitmap* LoadBitmapFromFile(const wchar_t* path) {
+    if (!g_rt || !path || !path[0]) return nullptr;
+    if (!g_wicFactory) {
+        CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&g_wicFactory));
+    }
+    if (!g_wicFactory) return nullptr;
+
+    std::wstring fullPath = path;
+    if (GetFileAttributesW(fullPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        wchar_t exePath[MAX_PATH] = L"";
+        if (GetModuleFileNameW(NULL, exePath, MAX_PATH)) {
+            wchar_t* lastSlash = wcsrchr(exePath, L'\\');
+            if (lastSlash) {
+                *(lastSlash + 1) = L'\0';
+                std::wstring candidate = std::wstring(exePath) + path;
+                if (GetFileAttributesW(candidate.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                    fullPath = candidate;
+                }
+            }
+        }
+    }
+
+    IWICBitmapDecoder* pDecoder = nullptr;
+    HRESULT hr = g_wicFactory->CreateDecoderFromFilename(fullPath.c_str(), NULL, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &pDecoder);
+    if (FAILED(hr) || !pDecoder) return nullptr;
+
+    IWICBitmapFrameDecode* pSource = nullptr;
+    hr = pDecoder->GetFrame(0, &pSource);
+    if (FAILED(hr) || !pSource) { pDecoder->Release(); return nullptr; }
+
+    IWICFormatConverter* pConverter = nullptr;
+    hr = g_wicFactory->CreateFormatConverter(&pConverter);
+    if (FAILED(hr) || !pConverter) { pSource->Release(); pDecoder->Release(); return nullptr; }
+
+    hr = pConverter->Initialize(pSource, GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, NULL, 0.f, WICBitmapPaletteTypeMedianCut);
+    if (FAILED(hr)) { pConverter->Release(); pSource->Release(); pDecoder->Release(); return nullptr; }
+
+    ID2D1Bitmap* pBitmap = nullptr;
+    hr = g_rt->CreateBitmapFromWicBitmap(pConverter, NULL, &pBitmap);
+
+    pConverter->Release();
+    pSource->Release();
+    pDecoder->Release();
+    return pBitmap;
+}
+
+static void PromptCustomWallpaper(HWND hwnd);
+static void SetCustomWallpaper(const std::wstring& path);
+
+
 // ---- gradient brushes -------------------------------------------------------
 static ID2D1LinearGradientBrush* MakeLinear(const D2D1_GRADIENT_STOP* stops, UINT32 n,
                                            D2D1_POINT_2F p0, D2D1_POINT_2F p1) {
@@ -804,6 +883,23 @@ static ID2D1LinearGradientBrush* MakeLinear(const D2D1_GRADIENT_STOP* stops, UIN
 
 static void BuildWallpaperBrushes() {
     const WpPreset& p = WP[g_wp % WP_COUNT];
+
+    // Transition bitmap
+    SafeRelease(g_wpOldBitmap);
+    g_wpOldBitmap = g_wpBitmap;
+    g_wpBitmap = nullptr;
+
+    const wchar_t* imgPath = nullptr;
+    if (p.file && p.file[0]) {
+        imgPath = p.file;
+    } else if (g_wp == WP_COUNT - 1 && !g_customWpPath.empty()) {
+        imgPath = g_customWpPath.c_str();
+    }
+
+    if (imgPath) {
+        g_wpBitmap = LoadBitmapFromFile(imgPath);
+    }
+
     D2D1_GRADIENT_STOP st[3] = {
         { 0.00f, C(p.a) },
         { 0.46f, C(p.b) },
@@ -812,10 +908,9 @@ static void BuildWallpaperBrushes() {
     SafeRelease(g_wpA);
     g_wpA = MakeLinear(st, 3, D2D1::Point2F(0.f, 0.f), D2D1::Point2F(DW * 0.30f, DH));
 
-    // Warm/accent light pool in the upper right.
     SafeRelease(g_glow);
     if (g_rt) {
-        D2D1_GRADIENT_STOP gs[2] = { { 0.f, C(p.glow, 0.50f) }, { 1.f, C(p.glow, 0.f) } };
+        D2D1_GRADIENT_STOP gs[2] = { { 0.f, C(p.glow, 0.38f) }, { 1.f, C(p.glow, 0.f) } };
         ID2D1GradientStopCollection* col = nullptr;
         if (SUCCEEDED(g_rt->CreateGradientStopCollection(gs, 2, D2D1_GAMMA_2_2,
                                                         D2D1_EXTEND_MODE_CLAMP, &col)) && col) {
@@ -836,52 +931,105 @@ static void BuildWallpaperBrushes() {
 static void SetWallpaper(int idx) {
     idx %= WP_COUNT;
     if (idx < 0) idx += WP_COUNT;
-    if (idx == g_wp) return;
+    if (idx == WP_COUNT - 1 && g_customWpPath.empty()) {
+        PromptCustomWallpaper(g_hwnd);
+        return;
+    }
+    if (idx == g_wp && g_wpBitmap) return;
     g_wp = idx;
-    // Cross-fade: the current brush becomes the outgoing one.
+    SaveSettings();
+
     SafeRelease(g_wpB);
     g_wpB = g_wpA;
     g_wpA = nullptr;
     BuildWallpaperBrushes();
-    // BuildWallpaperBrushes() released g_wpA (already null) — g_wpB survives.
+
     g_wpFade.Set(0.f);
     g_wpFade.To(1.f);
     ShowToast(std::wstring(L"Wallpaper: ") + WP[g_wp].name, (wchar_t)0xE790);
 }
 
+static void SetCustomWallpaper(const std::wstring& path) {
+    if (path.empty()) return;
+    g_customWpPath = path;
+    g_wp = WP_COUNT - 1;
+    SaveSettings();
+
+    SafeRelease(g_wpB);
+    g_wpB = g_wpA;
+    g_wpA = nullptr;
+    BuildWallpaperBrushes();
+
+    g_wpFade.Set(0.f);
+    g_wpFade.To(1.f);
+    ShowToast(L"Loaded Custom Wallpaper", (wchar_t)0xE790);
+}
+
+static void PromptCustomWallpaper(HWND hwnd) {
+    wchar_t filename[MAX_PATH] = L"";
+    OPENFILENAMEW ofn = { sizeof(OPENFILENAMEW) };
+    ofn.hwndOwner = hwnd;
+    ofn.lpstrFilter = L"Image Files (*.jpg;*.jpeg;*.png;*.bmp;*.webp)\0*.jpg;*.jpeg;*.png;*.bmp;*.webp\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFile = filename;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    ofn.lpstrTitle = L"Select Custom Desktop Wallpaper";
+    if (GetOpenFileNameW(&ofn)) {
+        SetCustomWallpaper(filename);
+    }
+}
+
 static void DrawWallpaper() {
-    // Base colour covers the frame while brushes are missing.
-    g_br->SetColor(C(WP[g_wp % WP_COUNT].a));
+    // Base deep dark canvas
+    g_br->SetColor(C(0x06080A));
     g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_br);
 
-    if (g_wpB && g_wpFade.x < 0.999f) {
-        g_wpB->SetOpacity(1.f - g_wpFade.x);
-        g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_wpB);
+    if (g_wpBitmap) {
+        D2D1_SIZE_F sz = g_wpBitmap->GetSize();
+        if (sz.width > 0.f && sz.height > 0.f) {
+            float scale = std::max(DW / sz.width, DH / sz.height);
+            float drawW = sz.width * scale;
+            float drawH = sz.height * scale;
+            float drawX = (DW - drawW) * 0.5f;
+            float drawY = (DH - drawH) * 0.5f;
+
+            float opacity = g_wpFade.x;
+            if (g_wpOldBitmap && opacity < 0.999f) {
+                D2D1_SIZE_F osz = g_wpOldBitmap->GetSize();
+                float oScale = std::max(DW / osz.width, DH / osz.height);
+                float oW = osz.width * oScale, oH = osz.height * oScale;
+                g_rt->DrawBitmap(g_wpOldBitmap, R((DW - oW)*0.5f, (DH - oH)*0.5f, oW, oH), 1.0f - opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            }
+            g_rt->DrawBitmap(g_wpBitmap, R(drawX, drawY, drawW, drawH), opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+
+            // Dark ambient atmospheric scrim for high contrast and text readability
+            g_br->SetColor(C(0x06080C, 0.32f));
+            g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_br);
+        }
+    } else {
+        if (g_wpB && g_wpFade.x < 0.999f) {
+            g_wpB->SetOpacity(1.f - g_wpFade.x);
+            g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_wpB);
+        }
+        if (g_wpA) {
+            g_wpA->SetOpacity(g_wpFade.x);
+            g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_wpA);
+        }
     }
-    if (g_wpA) {
-        g_wpA->SetOpacity(g_wpFade.x < 0.001f ? 1.f : g_wpFade.x);
-        g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_wpA);
-        g_wpA->SetOpacity(1.f);
-    }
+
     if (g_glow) {
-        // Very slow drift keeps the wallpaper feeling alive without noise;
-        // "reduce motion" freezes it instead of removing the light pool.
         float t = g_motion ? (float)g_clockT : 0.f;
         g_glow->SetCenter(D2D1::Point2F(DW * 0.66f - g_pageA.x * 160.f + std::sin(t * 0.06f) * 90.f,
                                         DH * 0.16f + std::cos(t * 0.045f) * 46.f));
-        g_glow->SetOpacity(0.55f + 0.45f * g_wpFade.x);
+        g_glow->SetOpacity(g_wpBitmap ? 0.32f : 0.55f);
         g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_glow);
         g_glow->SetOpacity(1.f);
     }
 
-    // Faint horizontal hairlines give the flat gradient some texture.
+    // Faint horizontal hairlines give the wallpaper glass texture
     for (int i = 1; i < 9; ++i) {
-        float y = DH * (float)i / 9.f;
-        Line(0.f, y, DW, y, C(WHITE, 0.008f));
-    }
-    if (g_scrim) {
-        g_scrim->SetOpacity(1.f);
-        g_rt->FillRectangle(R(0.f, DH - 320.f, DW, 320.f), g_scrim);
+        float y = (DH / 9.f) * (float)i;
+        Line(0.f, y, DW, y, C(WHITE, 0.012f));
     }
 }
 
@@ -1509,15 +1657,16 @@ static void DrawLauncher(float a) {
 //  Desktop context menu
 // ----------------------------------------------------------------------------
 struct CtxItem { const wchar_t* label; const wchar_t* key; wchar_t glyph; int cmd; };
-enum { CTX_WALL = 0, CTX_PERS, CTX_LAUNCH, CTX_SYS, CTX_FULL, CTX_LOCK, CTX_QUIT, CTX_N };
+enum { CTX_WALL = 0, CTX_CUSTOM_WALL, CTX_PERS, CTX_LAUNCH, CTX_SYS, CTX_FULL, CTX_LOCK, CTX_QUIT, CTX_N };
 static const CtxItem CTX[CTX_N] = {
-    { L"Next wallpaper",   L"",        (wchar_t)0xE790, CTX_WALL   },
-    { L"Personalise\u2026", L"",        (wchar_t)0xE713, CTX_PERS   },
-    { L"Open launcher",    L"Super",   (wchar_t)0xE700, CTX_LAUNCH },
-    { L"System menu",      L"",        (wchar_t)0xE713, CTX_SYS    },
-    { L"Toggle fullscreen", L"F11",    (wchar_t)0xE740, CTX_FULL   },
-    { L"Lock screen",      L"",        (wchar_t)0xE72E, CTX_LOCK   },
-    { L"Quit",             L"Ctrl+Q",  (wchar_t)0xE7E8, CTX_QUIT   },
+    { L"Choose wallpaper\u2026", L"",        (wchar_t)0xE8B9, CTX_CUSTOM_WALL },
+    { L"Next wallpaper",         L"",        (wchar_t)0xE790, CTX_WALL        },
+    { L"Personalise\u2026",       L"",        (wchar_t)0xE713, CTX_PERS        },
+    { L"Open launcher",          L"Super",   (wchar_t)0xE700, CTX_LAUNCH      },
+    { L"System menu",            L"",        (wchar_t)0xE713, CTX_SYS         },
+    { L"Toggle fullscreen",      L"F11",     (wchar_t)0xE740, CTX_FULL        },
+    { L"Lock screen",            L"",        (wchar_t)0xE72E, CTX_LOCK        },
+    { L"Quit",                   L"Ctrl+Q",  (wchar_t)0xE7E8, CTX_QUIT        },
 };
 
 static void DrawContextMenu(float a) {
@@ -1833,14 +1982,22 @@ static void SettingsContent(float x, float y, float w, float h) {
 
         Txt(L"WALLPAPER", lx, ry, half, 18.f, F_UI, 10.f, 600, COL_T35, 0, 1.f);
         {
-            const float sw = (half - 10.f) * 0.5f, sh = 58.f;
+            const float sw = (half - 10.f) * 0.5f, sh = 52.f;
             for (int i = 0; i < WP_COUNT; ++i) {
                 float px = lx + (float)(i % 2) * (sw + 10.f);
-                float py = ry + 24.f + (float)(i / 2) * (sh + 10.f);
+                float py = ry + 24.f + (float)(i / 2) * (sh + 8.f);
                 WallpaperSwatch(px, py, sw, sh, i, i == g_wp, g_hover == H_SET_WP + i);
             }
         }
-        float ly = ry + 24.f + 3.f * 68.f + 10.f;
+        float customBtnY = ry + 24.f + 4.f * 60.f + 6.f;
+        bool hovCustom = (g_hover == H_SET_CUSTOM_WP);
+        Fill(lx, customBtnY, half, 32.f, 9.f, C(WHITE, hovCustom ? 0.10f : 0.05f));
+        Stroke(lx, customBtnY, half, 32.f, 9.f, C(WHITE, hovCustom ? 0.22f : 0.12f));
+        Glyph((wchar_t)0xE8B9, lx + 20.f, customBtnY + 16.f, 12.f, COL_T90);
+        Txt(L"Browse Custom Image...", lx + 38.f, customBtnY + 7.f, half - 48.f, 18.f, F_UI, 11.f, 500, COL_T90, 0, 1.f);
+        AddHit(lx, customBtnY, half, 32.f, H_SET_CUSTOM_WP);
+
+        float ly = customBtnY + 44.f;
         Txt(L"WIDGET SIZE", lx, ly, half, 18.f, F_UI, 10.f, 600, COL_T35, 0, 1.f);
         {
             const float bw = (half - 16.f) / 3.f;
@@ -2125,7 +2282,8 @@ static void LaunchViewIndex(int vi) {
 static void RunContextCommand(int cmd) {
     g_ctxOpen = false;
     switch (cmd) {
-    case CTX_WALL:   SetWallpaper(g_wp + 1); break;
+    case CTX_CUSTOM_WALL: PromptCustomWallpaper(g_hwnd); break;
+    case CTX_WALL:        SetWallpaper(g_wp + 1); break;
     case CTX_PERS:   g_setPage = 1; OpenApp(APP_SETTINGS); break;
     case CTX_LAUNCH: g_panel = PANEL_LAUNCH; break;
     case CTX_SYS:    g_panel = PANEL_SYS; break;
@@ -2505,6 +2663,8 @@ static void UpdateAnimations(float dt) {
 //  Render target management
 // ----------------------------------------------------------------------------
 static void ReleaseBrushes() {
+    SafeRelease(g_wpBitmap);
+    SafeRelease(g_wpOldBitmap);
     SafeRelease(g_br);
     SafeRelease(g_wpA);
     SafeRelease(g_wpB);
@@ -2758,6 +2918,10 @@ static void HandleClick(int id, float mx, float my) {
     // --- Settings: wallpaper, widget size, widget visibility, preferences ---
     if (id >= H_SET_NAV && id < H_SET_NAV + 3) {
         g_setPage = id - H_SET_NAV;
+        return;
+    }
+    if (id == H_SET_CUSTOM_WP) {
+        PromptCustomWallpaper(g_hwnd);
         return;
     }
     if (id >= H_SET_WP && id < H_SET_WP + WP_COUNT) {
@@ -3391,6 +3555,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         DestroyWindow(h);
         return 0;
     case WM_DESTROY:
+        SafeRelease(g_wicFactory);
+        CoUninitialize();
         timeEndPeriod(1);
         g_netRunning = false;
         if (g_netThread.joinable()) g_netThread.join();
@@ -3471,6 +3637,7 @@ static_assert(H_HDOT + HOME_PAGES <= 1100, "home page dots overlap other ids");
 //  Entry point
 // ----------------------------------------------------------------------------
 int WINAPI WinMain(HINSTANCE hi, HINSTANCE, LPSTR, int nShow) {
+    CoInitialize(NULL);
     // Per-monitor DPI v2 when available (Win10 1703+), plain aware otherwise.
     HMODULE user32 = GetModuleHandleW(L"user32.dll");
     if (user32) {
