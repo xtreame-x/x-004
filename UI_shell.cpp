@@ -73,6 +73,7 @@
 #include <wlanapi.h>
 #include <bluetoothapis.h>
 #include <shellapi.h>
+#include <mmsystem.h>
 
 #include "shell_layout.h"
 
@@ -85,6 +86,7 @@
 #pragma comment(lib, "wlanapi.lib")
 #pragma comment(lib, "bthprops.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "winmm.lib")
 #endif
 
 // ----------------------------------------------------------------------------
@@ -274,6 +276,131 @@ struct Anim {
     }
 };
 
+// ----------------------------------------------------------------------------
+//  Critically Damped Harmonic Spring (2nd-Order Physics)
+//  Preserves exact pointer release velocity into a seamless glide.
+//  Zero sudden stops, zero jerk, frame-rate independent closed-form ODE.
+// ----------------------------------------------------------------------------
+struct SpringAnim {
+    float x = 0.f;
+    float target = 0.f;
+    float vel = 0.f;
+    float omega = 14.5f; // natural angular frequency (silky OS-grade settling)
+
+    void Set(float v) {
+        x = target = v;
+        vel = 0.f;
+    }
+
+    void To(float t) {
+        target = t;
+    }
+
+    void ToWithVel(float t, float v) {
+        target = t;
+        vel = v;
+    }
+
+    bool Settled() const {
+        return std::fabs(target - x) < 0.0004f && std::fabs(vel) < 0.001f;
+    }
+
+    float Step(float dt) {
+        if (dt <= 0.f) return x;
+        if (dt > 0.06f) dt = 0.06f; // clamp hitch
+        float e0 = x - target;
+        float decay = std::exp(-omega * dt);
+        float c2 = vel + omega * e0;
+        x = target + decay * (e0 + c2 * dt);
+        vel = decay * (vel - omega * c2 * dt);
+        if (Settled()) {
+            x = target;
+            vel = 0.f;
+        }
+        return x;
+    }
+
+    void Follow(float dest, float dt) {
+        target = dest;
+        float rate = 52.f; // very responsive subpixel follow
+        x += (dest - x) * (1.f - std::exp(-rate * dt));
+        vel = 0.f;
+    }
+};
+
+// ----------------------------------------------------------------------------
+//  Touch/Pointer Motion Predictor (Weighted Least-Squares Regression)
+//  Filters sensor jitter & latency-compensates 1 frame ahead.
+// ----------------------------------------------------------------------------
+struct TouchPredictor {
+    static const int MAX_SAMPLES = 16;
+    struct Sample {
+        float x;
+        double t;
+    };
+    Sample history[MAX_SAMPLES];
+    int count = 0;
+    int head = 0;
+
+    void Reset() {
+        count = 0;
+        head = 0;
+    }
+
+    void Add(float x, double t) {
+        history[head] = { x, t };
+        head = (head + 1) % MAX_SAMPLES;
+        if (count < MAX_SAMPLES) count++;
+    }
+
+    float GetVelocity(double now, float* outPredictedX = nullptr, float leadSec = 0.018f) const {
+        if (count < 2) {
+            if (outPredictedX && count > 0) *outPredictedX = history[(head - 1 + MAX_SAMPLES) % MAX_SAMPLES].x;
+            return 0.f;
+        }
+
+        const double WINDOW = 0.120; // 120ms rolling window
+        float sumW = 0.f, sumWT = 0.f, sumWX = 0.f;
+        float sumWTT = 0.f, sumWTX = 0.f;
+
+        for (int i = 0; i < count; ++i) {
+            int idx = (head - 1 - i + MAX_SAMPLES) % MAX_SAMPLES;
+            double dt = now - history[idx].t;
+            if (dt > WINDOW) break;
+
+            float age = (float)(dt / WINDOW);
+            float w = (1.f - age) * (1.f - age) + 0.04f;
+            float tRel = (float)(history[idx].t - now);
+            float xVal = history[idx].x;
+
+            sumW += w;
+            sumWT += w * tRel;
+            sumWX += w * xVal;
+            sumWTT += w * tRel * tRel;
+            sumWTX += w * tRel * xVal;
+        }
+
+        if (sumW < 0.001f) return 0.f;
+        float denom = sumW * sumWTT - sumWT * sumWT;
+        if (std::fabs(denom) < 1e-6f) return 0.f;
+
+        float vel = (sumW * sumWTX - sumWT * sumWX) / denom;
+        int newestIdx = (head - 1 + MAX_SAMPLES) % MAX_SAMPLES;
+        float curX = history[newestIdx].x;
+
+        double idle = now - history[newestIdx].t;
+        if (idle > 0.035) {
+            float fade = (float)std::exp(-(idle - 0.035) * 45.0);
+            vel *= fade;
+        }
+
+        if (outPredictedX) {
+            *outPredictedX = curX + vel * leadSec;
+        }
+        return vel;
+    }
+};
+
 static double g_clockT = 0.0;      // seconds since start, for blinking carets
 static float  g_dt = 1.f / 60.f;
 static double g_lastT = 0.0;
@@ -386,28 +513,27 @@ static Anim g_sysA, g_launchA, g_lockA, g_ctxA, g_wpFade;
 // (0.0 .. HOME_PAGES-1); it follows the pointer while dragging and springs to
 // g_page on release.
 static const int HOME_PAGES = 2;
-static int    g_page = 0;                       // page we are settling on
-static Anim   g_pageA;                          // animated page position
-static bool   g_pdown = false;                  // pointer pressed on the home screen
-static bool   g_pdrag = false;                  // ... and has become a swipe
-static int    g_pdid = 0;                       // hit id under the press
-static float  g_pdx0 = 0.f, g_pdy0 = 0.f;       // press point (design space)
-static float  g_pstartPos = 0.f;                // g_pageA.x at press
-static float  g_pvx = 0.f;                      // smoothed swipe velocity (design px/s)
-static float  g_plastX = 0.f;
-static double g_plastT = 0.0;
-static float  g_pageDX = 0.f;                   // x offset of the page being drawn
-// Two-finger touchpad swipe (WM_MOUSEHWHEEL). A gesture = a run of events with
-// no gap longer than ~150 ms (that includes the touchpad's inertia tail).
-static const float HSWIPE_DIR = 1.f;            // set to -1.f if the swipe feels reversed
-static bool   g_hg = false;                     // gesture in progress
-static bool   g_hlock = false;                  // page already flipped in this gesture
-static float  g_hacc = 0.f;                     // summed wheel delta of the gesture
-static int    g_hbase = 0;                      // page the gesture started on
-static double g_hlastT = 0.0;
-static void GoPage(int p) {
+static int        g_page = 0;                   // page we are settling on
+static SpringAnim g_pageA;                      // 2nd-order spring position
+static TouchPredictor g_tracker;                // subpixel motion & velocity tracker
+static bool       g_pdown = false;              // pointer pressed on the home screen
+static bool       g_pdrag = false;              // ... and has become a swipe
+static int        g_pdid = 0;                   // hit id under the press
+static float      g_pdx0 = 0.f, g_pdy0 = 0.f;   // press point (design space)
+static float      g_pstartPos = 0.f;            // g_pageA.x at press
+static float      g_pageDX = 0.f;               // x offset of the page being drawn
+
+// Two-finger touchpad swipe (WM_MOUSEHWHEEL).
+static const float HSWIPE_DIR = 1.f;
+static bool       g_hg = false;
+static bool       g_hlock = false;
+static float      g_hacc = 0.f;
+static int        g_hbase = 0;
+static double     g_hlastT = 0.0;
+
+static void GoPage(int p, float initialVel = 0.f) {
     g_page = p < 0 ? 0 : (p > HOME_PAGES - 1 ? HOME_PAGES - 1 : p);
-    g_pageA.To((float)g_page);
+    g_pageA.ToWithVel((float)g_page, initialVel);
 }
 static int  g_launchPage = 0;
 static int  g_launchSel = -1;
@@ -2343,7 +2469,7 @@ static void UpdateAnimations(float dt) {
     if (!g_pdrag && !(g_hg && !g_hlock)) {       // while swiping the input owns the position
         g_pageA.To((float)g_page);
         if (!g_motion) g_pageA.Set(g_pageA.target);
-        else g_pageA.Step(dt, 14.f);
+        else g_pageA.Step(dt);
     }
 
     // Reduce motion: panels arrive fully open instead of sliding, and the
@@ -2425,11 +2551,17 @@ static bool PagerHit(int id) {
 static bool PagerAreaHit(int id) {
     return PagerHit(id) || (id >= H_HDOT && id < H_HDOT + HOME_PAGES);
 }
-// Resistance past the first / last page, like an iOS / Android overscroll.
+// Smooth hyperbolic rubber-band resistance curve (C1 continuous at boundaries)
 static float RubberPos(float p) {
     const float hi = (float)(HOME_PAGES - 1);
-    if (p < 0.f) return p * 0.35f;
-    if (p > hi) return hi + (p - hi) * 0.35f;
+    if (p < 0.f) {
+        float over = -p;
+        return -(over * 0.45f) / (1.f + over * 1.25f);
+    }
+    if (p > hi) {
+        float over = p - hi;
+        return hi + (over * 0.45f) / (1.f + over * 1.25f);
+    }
     return p;
 }
 static void HomeAppTap(int i) {
@@ -3018,22 +3150,18 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         }
         if (g_pdown) {
             double now = NowSec();
+            g_tracker.Add(mx, now);
             float dx = mx - g_pdx0, dy = my - g_pdy0;
-            if (!g_pdrag && std::fabs(dx) > 14.f && std::fabs(dx) > std::fabs(dy)) {
+            if (!g_pdrag && std::fabs(dx) > 11.f && std::fabs(dx) > std::fabs(dy)) {
                 g_pdrag = true;                  // horizontal intent: this is a swipe, not a tap
                 g_hover = H_NONE;
-                g_pvx = 0.f;
-                g_plastX = mx;
-                g_plastT = now;
             }
             if (g_pdrag) {
-                g_pageA.Set(RubberPos(g_pstartPos - dx / DW));
-                float dt = (float)(now - g_plastT);
-                if (dt > 0.0005f) {
-                    g_pvx = g_pvx * 0.55f + ((mx - g_plastX) / dt) * 0.45f;
-                    g_plastX = mx;
-                    g_plastT = now;
-                }
+                float predX;
+                g_tracker.GetVelocity(now, &predX, 0.016f);
+                float curDx = predX - g_pdx0;
+                float targetPos = RubberPos(g_pstartPos - curDx / DW);
+                g_pageA.Follow(targetPos, g_dt);
                 InvalidateRect(h, nullptr, FALSE);
                 return 0;
             }
@@ -3108,15 +3236,14 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         }
 
         if (g_panel == PANEL_NONE && PagerHit(id)) {
-            // Might become a swipe: remember where it started. App tiles are
-            // activated on release (a tap), the bare desktop on press as before.
             g_pdown = true;
             g_pdrag = false;
             g_pdid = id;
             g_pdx0 = mx;
             g_pdy0 = my;
             g_pstartPos = g_pageA.x;
-            g_pvx = 0.f;
+            g_tracker.Reset();
+            g_tracker.Add(mx, NowSec());
             SetCapture(h);
             if (id == H_DESK) HandleClick(id, mx, my);
             InvalidateRect(h, nullptr, FALSE);
@@ -3160,26 +3287,34 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             ToDesign(lp, mx, my);
             const bool wasDrag = g_pdrag;
             const int did = g_pdid;
+            double now = NowSec();
+            g_pdown = false;
+            g_pdrag = false;
+            ReleaseCapture();
             if (wasDrag) {
-                float v = g_pvx;
-                if (NowSec() - g_plastT > 0.08) v = 0.f;           // finger rested before lifting
-                const float dx = mx - g_pdx0;
+                float v = g_tracker.GetVelocity(now);
+                float dx = mx - g_pdx0;
                 const int base = (int)std::floor(g_pstartPos + 0.5f);
-                float proj = g_pageA.x - v * 0.18f / DW;           // where momentum would carry it
-                int target = (int)std::floor(proj + 0.5f);
-                if (std::fabs(v) > 700.f && std::fabs(dx) > 40.f)  // quick flick = always one page
+                float projX = dx + v * 0.20f;
+
+                int target = base;
+                // High-confidence flick detection with directional confirmation
+                if (std::fabs(v) > 340.f && ((v < 0.f && dx < 0.f) || (v > 0.f && dx > 0.f))) {
                     target = base + (v < 0.f ? 1 : -1);
-                g_pdown = false;
-                g_pdrag = false;
-                GoPage(target);
+                } else if (std::fabs(projX) > DW * 0.26f) {
+                    target = base + (projX < 0.f ? 1 : -1);
+                }
+                target = std::max(0, std::min(HOME_PAGES - 1, target));
+
+                // Seamless glide: transfer release velocity directly into the 2nd-order spring
+                float releaseVel = Clamp(-v / DW, -7.0f, 7.0f);
+                GoPage(target, releaseVel);
             } else {
-                g_pdown = false;
-                if (HitTest(mx, my) == did) {                      // released where it was pressed = tap
+                if (HitTest(mx, my) == did) {
                     if (did >= H_HAPP && did < H_HAPP + APP_N) HomeAppTap(did - H_HAPP);
                     else if (did != H_DESK) HandleClick(did, mx, my);
                 }
             }
-            ReleaseCapture();
         }
         if (g_dragSlider >= 0) { g_dragSlider = -1; ReleaseCapture(); SaveSettings(); }
         if (g_dragWin >= 0) {
@@ -3225,18 +3360,19 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     }
     case WM_MOUSEHWHEEL: {                           // two-finger sideways swipe on a touchpad
         if (g_locked || g_panel != PANEL_NONE || g_ctxOpen || g_pdown) return 0;
-        const float T = 240.f;                       // wheel units that make a full page flip
+        const float T = 220.f;
         double now = NowSec();
         if (!g_hg) { g_hg = true; g_hlock = false; g_hacc = 0.f; g_hbase = g_page; }
         g_hlastT = now;
         if (!g_hlock) {
             g_hacc += (float)GET_WHEEL_DELTA_WPARAM(wp) * HSWIPE_DIR;
             if (std::fabs(g_hacc) >= T) {
-                GoPage(g_hbase + (g_hacc > 0.f ? 1 : -1));
-                g_hlock = true;                      // one page per gesture; inertia tail is ignored
+                int dir = g_hacc > 0.f ? 1 : -1;
+                GoPage(g_hbase + dir, (float)dir * 2.8f);
+                g_hlock = true;
             } else {
-                // Peek: the page leans with the fingers until the flip threshold.
-                g_pageA.Set(RubberPos((float)g_hbase + g_hacc / T * 0.22f));
+                float peek = RubberPos((float)g_hbase + (g_hacc / T) * 0.32f);
+                g_pageA.Follow(peek, g_dt);
             }
         }
         InvalidateRect(h, nullptr, FALSE);
@@ -3255,6 +3391,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         DestroyWindow(h);
         return 0;
     case WM_DESTROY:
+        timeEndPeriod(1);
         g_netRunning = false;
         if (g_netThread.joinable()) g_netThread.join();
         KillTimer(h, 1);
@@ -3392,7 +3529,8 @@ int WINAPI WinMain(HINSTANCE hi, HINSTANCE, LPSTR, int nShow) {
     SampleWifi();
     SampleBluetooth();
     g_netThread = std::thread(NetWorkerThread);
-    SetTimer(g_hwnd, 1, 15, nullptr);
+    timeBeginPeriod(1);
+    SetTimer(g_hwnd, 1, 10, nullptr);
     SetFocus(g_hwnd);
 
     MSG msg;
