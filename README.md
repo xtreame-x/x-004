@@ -23,9 +23,10 @@ A high-performance, hardware-accelerated desktop shell for Windows written in na
   - **Live Weather**: Fetches real-time temperature, condition descriptions, and daily highs/lows from `wttr.in` with custom procedural weather glyphs (rain, storm, cloud, sun).
 
 - **Desktop Shell & Productivity**:
+  - **Direct Real Windows App Launching**: App icons across the searchable Launcher, Home Screen grid, and Pinned Shelf directly execute real Windows programs and URI protocols (`explorer.exe`, Windows Terminal `wt.exe`/PowerShell, Windows Settings `ms-settings:`, Notepad, Google Chrome, Spotify, Windows Photos `ms-photos:`, Camera `microsoft.windows.camera:`, Calculator `calc.exe`, OneNote, Microsoft Store, Microsoft To Do, and Google Workspace web services) with graceful fallbacks.
   - **Swipeable Home Pager**: 2-page desktop experience. Page 0 hosts interactive desktop widgets; Page 1 hosts a direct 24-app grid. Supports mouse drag with flick momentum and rubber-band overscroll, touchpad 2-finger horizontal swipes (`WM_MOUSEHWHEEL`), arrow keys, and animated indicator dots.
   - **Dynamic Text Zoom**: Scale small interface typography on the fly with `Ctrl +`, `Ctrl -`, and `Ctrl 0` (range 90%–150%, default 115%), persisted automatically to `shell.ini`.
-  - **App Launcher**: Fullscreen searchable launcher overlay containing 24 curated system apps and utilities with real-time text filtering.
+  - **App Launcher**: Fullscreen searchable launcher overlay containing 24 curated system apps and utilities with real-time text filtering and keyboard selection (`Enter`).
   - **Quick Settings Flyout**: ChromeOS-inspired system tray shelf with Wi-Fi, Bluetooth, Do Not Disturb, Night Light, and Volume controls.
   - **Adaptive Bounds**: DPI-aware layout engine (`shell_layout.h`) ensuring consistent proportions across 16:10 and 16:9 displays without double-scaling bugs.
   - **Fullscreen Toggle**: Press `F11` to toggle between desktop window mode and borderless immersion mode.
@@ -52,7 +53,7 @@ Or run `g++` directly:
 
 ```bash
 g++ -std=c++17 -O2 -s -mwindows -static UI_shell.cpp -o UI_shell.exe \
-    -ld2d1 -ldwrite -luser32 -lgdi32 -lwinhttp -lwlanapi -lbthprops
+    -ld2d1 -ldwrite -luser32 -lgdi32 -lwinhttp -lwlanapi -lbthprops -lshell32
 ```
 
 ### Running

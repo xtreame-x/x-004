@@ -72,6 +72,7 @@
 #include <winhttp.h>
 #include <wlanapi.h>
 #include <bluetoothapis.h>
+#include <shellapi.h>
 
 #include "shell_layout.h"
 
@@ -83,6 +84,7 @@
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "wlanapi.lib")
 #pragma comment(lib, "bthprops.lib")
+#pragma comment(lib, "shell32.lib")
 #endif
 
 // ----------------------------------------------------------------------------
@@ -480,33 +482,40 @@ static int HitTest(float mx, float my) {
 // ----------------------------------------------------------------------------
 //  Data
 // ----------------------------------------------------------------------------
-struct AppDef { const wchar_t* name; wchar_t glyph; const wchar_t* mono; int kind; };
+struct AppDef {
+    const wchar_t* name;
+    wchar_t        glyph;
+    const wchar_t* mono;
+    int            kind;
+    const wchar_t* exec;
+    const wchar_t* fallback;
+};
 // glyph == 0 → draw `mono` in Consolas instead of an MDL2 glyph.
 static const AppDef APPS[] = {
-    { L"Files",       0xE8B7, nullptr, APP_FILES    },
-    { L"Terminal",    0,      L">_",   APP_TERM     },
-    { L"Settings",    0xE713, nullptr, APP_SETTINGS },
-    { L"Text Editor", 0xE70F, nullptr, APP_EDITOR   },
-    { L"About",       0xE946, nullptr, APP_ABOUT    },
-    { L"Chrome",      0xE774, nullptr, -1           },
-    { L"Gmail",       0xE715, nullptr, -1           },
-    { L"Calendar",    0xE787, nullptr, -1           },
-    { L"Photos",      0xE91B, nullptr, -1           },
-    { L"Play Music",  0xE8D6, nullptr, -1           },
-    { L"Camera",      0xE722, nullptr, -1           },
-    { L"Maps",        0xE707, nullptr, -1           },
-    { L"Weather",     0xE706, nullptr, -1           },
-    { L"Clock",       0xE823, nullptr, -1           },
-    { L"Store",       0xE719, nullptr, -1           },
-    { L"Drive",       0xE753, nullptr, -1           },
-    { L"Docs",        0xE8A5, nullptr, -1           },
-    { L"Calculator",  0,      L"1+2",  -1           },
-    { L"Notes",       0xE70F, nullptr, -1           },
-    { L"Meet",        0xE77B, nullptr, -1           },
-    { L"Chat",        0xE8BD, nullptr, -1           },
-    { L"Tasks",       0xE9D5, nullptr, -1           },
-    { L"Files Pro",   0xE8B7, nullptr, -1           },
-    { L"Help",        0xE897, nullptr, -1           },
+    { L"Files",       0xE8B7, nullptr, APP_FILES,    L"explorer.exe",                nullptr },
+    { L"Terminal",    0,      L">_",   APP_TERM,     L"wt.exe",                      L"powershell.exe" },
+    { L"Settings",    0xE713, nullptr, APP_SETTINGS, L"ms-settings:",               nullptr },
+    { L"Text Editor", 0xE70F, nullptr, APP_EDITOR,   L"notepad.exe",                 nullptr },
+    { L"About",       0xE946, nullptr, APP_ABOUT,    nullptr,                        nullptr },
+    { L"Chrome",      0xE774, nullptr, -1,           L"chrome.exe",                  L"https://www.google.com" },
+    { L"Gmail",       0xE715, nullptr, -1,           L"https://mail.google.com",     L"mailto:" },
+    { L"Calendar",    0xE787, nullptr, -1,           L"outlookcal:",                 L"https://calendar.google.com" },
+    { L"Photos",      0xE91B, nullptr, -1,           L"ms-photos:",                  L"explorer.exe shell:My Pictures" },
+    { L"Play Music",  0xE8D6, nullptr, -1,           L"spotify:",                    L"https://music.youtube.com" },
+    { L"Camera",      0xE722, nullptr, -1,           L"microsoft.windows.camera:",   nullptr },
+    { L"Maps",        0xE707, nullptr, -1,           L"bingmaps:",                   L"https://maps.google.com" },
+    { L"Weather",     0xE706, nullptr, -1,           L"bingweather:",                L"https://weather.com" },
+    { L"Clock",       0xE823, nullptr, -1,           L"ms-clock:",                   nullptr },
+    { L"Store",       0xE719, nullptr, -1,           L"ms-windows-store:",           nullptr },
+    { L"Drive",       0xE753, nullptr, -1,           L"https://drive.google.com",    nullptr },
+    { L"Docs",        0xE8A5, nullptr, -1,           L"https://docs.google.com",     nullptr },
+    { L"Calculator",  0,      L"1+2",  -1,           L"calc.exe",                    L"calculator:" },
+    { L"Notes",       0xE70F, nullptr, -1,           L"onenote:",                    L"notepad.exe" },
+    { L"Meet",        0xE77B, nullptr, -1,           L"https://meet.google.com",     nullptr },
+    { L"Chat",        0xE8BD, nullptr, -1,           L"https://chat.google.com",     L"ms-teams:" },
+    { L"Tasks",       0xE9D5, nullptr, -1,           L"ms-todo:",                    L"https://tasks.google.com" },
+    { L"Files Pro",   0xE8B7, nullptr, -1,           L"explorer.exe shell:Personal", L"explorer.exe" },
+    { L"Help",        0xE897, nullptr, -1,           L"ms-contact-support:",         L"https://support.microsoft.com/windows" },
 };
 static const int APP_N = (int)(sizeof(APPS) / sizeof(APPS[0]));
 
@@ -640,6 +649,7 @@ static std::wstring MediaTime(float sec) {
 static void UpdateAnimations(float dt);
 static void Render();
 static void OpenApp(int kind);
+static void LaunchRealApp(const AppDef& app);
 static void ShowToast(const std::wstring& text, wchar_t glyph);
 static void ClosePanels();
 static void SetWallpaper(int idx);
@@ -1957,15 +1967,33 @@ static void OpenApp(int kind) {
     ShowToast(std::wstring(L"Opened ") + WIN_TITLE[kind], WIN_GLYPH[kind]);
 }
 
-static void LaunchViewIndex(int vi) {
-    if (vi < 0 || vi >= (int)g_view.size()) return;
-    const AppDef& app = APPS[g_view[vi]];
-    if (app.kind >= 0) {
+static bool TryShellExec(const wchar_t* target, const wchar_t* params = nullptr) {
+    if (!target || !target[0]) return false;
+    HINSTANCE hInst = ShellExecuteW(nullptr, L"open", target, params, nullptr, SW_SHOWNORMAL);
+    return ((INT_PTR)hInst > 32);
+}
+
+static void LaunchRealApp(const AppDef& app) {
+    bool ok = false;
+    if (app.exec && app.exec[0]) {
+        ok = TryShellExec(app.exec);
+        if (!ok && app.fallback && app.fallback[0]) {
+            ok = TryShellExec(app.fallback);
+        }
+    }
+    if (ok) {
+        ShowToast(std::wstring(L"Launched ") + app.name, app.glyph ? app.glyph : (wchar_t)0xE756);
+    } else if (app.kind >= 0) {
         OpenApp(app.kind);
     } else {
-        ShowToast(std::wstring(L"Opening ") + app.name + L"\u2026", app.glyph);
-        ClosePanels();
+        ShowToast(std::wstring(L"Unable to launch ") + app.name, (wchar_t)0xE783);
     }
+}
+
+static void LaunchViewIndex(int vi) {
+    if (vi < 0 || vi >= (int)g_view.size()) return;
+    LaunchRealApp(APPS[g_view[vi]]);
+    ClosePanels();
 }
 
 static void RunContextCommand(int cmd) {
@@ -2406,9 +2434,7 @@ static float RubberPos(float p) {
 }
 static void HomeAppTap(int i) {
     if (i < 0 || i >= APP_N) return;
-    const AppDef& a = APPS[i];
-    if (a.kind >= 0) OpenApp(a.kind);
-    else ShowToast(std::wstring(L"Opening ") + a.name + L"\u2026", a.glyph ? a.glyph : (wchar_t)0xE756);
+    LaunchRealApp(APPS[i]);
 }
 
 static void DrawHomeApps() {
@@ -2680,9 +2706,7 @@ static void HandleClick(int id, float mx, float my) {
     if (id >= H_SHELF && id < H_SHELF + 40) {
         int i = id - H_SHELF;
         if (i >= 0 && i < PINNED_N) {
-            int kind = APPS[PINNED[i]].kind;
-            if (kind >= 0) OpenApp(kind);
-            else ShowToast(std::wstring(L"Opening ") + APPS[PINNED[i]].name + L"\u2026", APPS[PINNED[i]].glyph);
+            LaunchRealApp(APPS[PINNED[i]]);
         }
         return;
     }
