@@ -159,6 +159,211 @@ inline int Compute(const bool visible[W_COUNT], float scale, float originX, floa
     return used;
 }
 
+// ---------------------------------------------------------------------------
+//  Layout presets.
+//
+//  A layout is an ordered list of rows; a row is an ordered list of cells; a
+//  cell is a stack of widget ids with a fixed design-space width and an
+//  optional vertical offset (dy) used to stagger a row. Rows advance by their
+//  tallest cell, hidden widgets take no space inside their stack, and a stack
+//  whose widgets are all hidden contributes only its dy.
+//
+//  Widgets keep their authored height but stretch horizontally to the cell
+//  width, so every drawer may safely be handed a wider card than it was
+//  authored at (its right-aligned pieces are anchored to w). The classic
+//  three-column flow is expressed by preset 0, which reproduces Compute()
+//  exactly: same origin, gaps and column widths.
+// ---------------------------------------------------------------------------
+constexpr int LAY_COUNT     = 7;   // classic + six new arrangements
+constexpr int LAY_MAX_ROWS  = 4;
+constexpr int LAY_MAX_CELLS = 4;
+constexpr int LAY_MAX_IDS   = 4;
+
+struct Cell { float w; float dy; int ids[LAY_MAX_IDS]; int n; };
+struct Row  { Cell cells[LAY_MAX_CELLS]; int n; };
+struct LayoutDef {
+    const wchar_t* name;
+    const wchar_t* blurb;
+    float originX, top, colGap, rowGap;
+    int   n;
+    Row   rows[LAY_MAX_ROWS];
+};
+
+inline float SpecH(int id) {
+    int n = 0;
+    const Spec* s = Specs(n);
+    for (int i = 0; i < n; ++i) if (s[i].id == id) return s[i].h;
+    return 0.f;
+}
+
+inline const LayoutDef* LayoutTable(int& n) {
+    static const LayoutDef L[LAY_COUNT] = {
+        // 0 — Classic: the original left-aligned three-column flow.
+        { L"Classic", L"The original three-column flow",
+          96.f, 88.f, 18.f, 18.f, 1, {
+            { { { 420.f, 0.f, { W_CLOCK, W_NOTES, W_MEDIA }, 3 },
+                { 300.f, 0.f, { W_WEATHER, W_FINANCE, W_SYSTEM }, 3 },
+                { 300.f, 0.f, { W_RECENT, W_SHORTCUTS }, 2 } }, 3 },
+        } },
+        // 1 — Bento: full-width mosaic, three rows of unequal tiles.
+        { L"Bento", L"Full-width mosaic of unequal tiles",
+          96.f, 132.f, 24.f, 20.f, 3, {
+            { { { 780.f, 0.f, { W_CLOCK }, 1 },
+                { 460.f, 0.f, { W_WEATHER }, 1 },
+                { 440.f, 0.f, { W_FINANCE }, 1 } }, 3 },
+            { { { 560.f, 0.f, { W_NOTES }, 1 },
+                { 560.f, 0.f, { W_MEDIA }, 1 },
+                { 560.f, 0.f, { W_SYSTEM }, 1 } }, 3 },
+            { { { 852.f, 0.f, { W_RECENT }, 1 },
+                { 852.f, 0.f, { W_SHORTCUTS }, 1 } }, 2 },
+        } },
+        // 2 — Console: three full-width bands, hero clock on top.
+        { L"Console", L"Full-width bands, hero clock on top",
+          96.f, 96.f, 24.f, 18.f, 3, {
+            { { { 1728.f, 0.f, { W_CLOCK }, 1 } }, 1 },
+            { { { 414.f, 0.f, { W_WEATHER }, 1 },
+                { 414.f, 0.f, { W_FINANCE }, 1 },
+                { 414.f, 0.f, { W_SYSTEM }, 1 },
+                { 414.f, 0.f, { W_RECENT }, 1 } }, 4 },
+            { { { 690.f, 0.f, { W_NOTES }, 1 },
+                { 560.f, 0.f, { W_MEDIA }, 1 },
+                { 430.f, 0.f, { W_SHORTCUTS }, 1 } }, 3 },
+        } },
+        // 3 — Feed: two generous centred columns, tight vertical rhythm.
+        { L"Feed", L"Two generous centred columns",
+          88.f, 88.f, 24.f, 14.f, 1, {
+            { { { 860.f, 0.f, { W_CLOCK, W_NOTES, W_WEATHER, W_FINANCE }, 4 },
+                { 860.f, 0.f, { W_MEDIA, W_SYSTEM, W_RECENT, W_SHORTCUTS }, 4 } }, 2 },
+        } },
+        // 4 — Matrix: an even four-by-two grid of uniform tiles.
+        { L"Matrix", L"Even four-by-two grid of uniform tiles",
+          60.f, 232.f, 24.f, 24.f, 2, {
+            { { { 430.f, 0.f, { W_CLOCK }, 1 },
+                { 430.f, 0.f, { W_WEATHER }, 1 },
+                { 430.f, 0.f, { W_FINANCE }, 1 },
+                { 430.f, 0.f, { W_SYSTEM }, 1 } }, 4 },
+            { { { 430.f, 0.f, { W_NOTES }, 1 },
+                { 430.f, 0.f, { W_MEDIA }, 1 },
+                { 430.f, 0.f, { W_RECENT }, 1 },
+                { 430.f, 0.f, { W_SHORTCUTS }, 1 } }, 4 },
+        } },
+        // 5 — Rail: a narrow stats rail on the left, two wide cards right.
+        { L"Rail", L"Narrow stats rail with wide cards beside it",
+          106.f, 112.f, 24.f, 16.f, 1, {
+            { { { 340.f, 0.f, { W_WEATHER, W_FINANCE, W_SYSTEM }, 3 },
+                { 660.f, 0.f, { W_CLOCK, W_NOTES }, 2 },
+                { 660.f, 0.f, { W_MEDIA, W_RECENT, W_SHORTCUTS }, 3 } }, 3 },
+        } },
+        // 6 — Cascade: three equal columns dropped to staggered heights.
+        { L"Cascade", L"Three equal columns at staggered heights",
+          96.f, 88.f, 24.f, 18.f, 1, {
+            { { { 560.f, 0.f, { W_CLOCK, W_NOTES }, 2 },
+                { 560.f, 96.f, { W_WEATHER, W_FINANCE, W_SYSTEM }, 3 },
+                { 560.f, 48.f, { W_MEDIA, W_RECENT, W_SHORTCUTS }, 3 } }, 3 },
+        } },
+    };
+    n = LAY_COUNT;
+    return L;
+}
+
+// Total design-space height of the tallest cell in a layout (dy included) and
+// the width of its widest row, both at scale 1. Used by FitLayout().
+inline void LayoutNatural(int lay, const bool visible[W_COUNT],
+                          float& tallest, float& widest) {
+    int n = 0;
+    const LayoutDef* L = LayoutTable(n);
+    tallest = 0.f;
+    widest = 0.f;
+    if (lay < 0 || lay >= n) { tallest = 1.f; return; }
+    const LayoutDef& d = L[lay];
+    for (int r = 0; r < d.n; ++r) {
+        float rowW = 0.f;
+        for (int c = 0; c < d.rows[r].n; ++c) {
+            const Cell& cell = d.rows[r].cells[c];
+            float h = -d.rowGap;
+            for (int k = 0; k < cell.n; ++k) {
+                if (visible[cell.ids[k]]) h += SpecH(cell.ids[k]) + d.rowGap;
+            }
+            if (h < 0.f) h = 0.f;
+            h += cell.dy;
+            if (h > tallest) tallest = h;
+            rowW += cell.w;
+            if (c) rowW += d.colGap;
+        }
+        if (rowW > widest) widest = rowW;
+    }
+    if (tallest <= 0.f) tallest = 1.f;
+}
+
+// Largest scale (<= the requested one) at which the layout still fits between
+// its top margin and the shelf, and still fits inside the design canvas.
+inline float FitLayout(int lay, const bool visible[W_COUNT], float scale, float shelfTop) {
+    if (scale < 0.5f) scale = 0.5f;
+    int n = 0;
+    const LayoutDef* L = LayoutTable(n);
+    if (lay < 0 || lay >= n) return scale;
+    float tallest = 0.f, widest = 0.f;
+    LayoutNatural(lay, visible, tallest, widest);
+    float fit = scale;
+    const float maxH = (shelfTop - L[lay].top) / tallest * 0.999f;
+    if (maxH < fit) fit = maxH;
+    const float avail = kDesignW - 2.f * L[lay].originX;
+    if (widest > 0.f && avail > 0.f) {
+        const float maxW = avail / widest * 0.999f;
+        if (maxW < fit) fit = maxW;
+    }
+    if (fit < 0.5f) fit = 0.5f;
+    return fit;
+}
+
+// Place every visible widget of a layout. out must hold W_COUNT rects. Returns
+// how many were written; rects that would reach the shelf are dropped rather
+// than drawn underneath it.
+inline int ComputeLayout(int lay, const bool visible[W_COUNT], float scale,
+                         float shelfTop, Rect out[W_COUNT]) {
+    int n = 0;
+    const LayoutDef* L = LayoutTable(n);
+    if (lay < 0 || lay >= n) lay = 0;
+    scale = FitLayout(lay, visible, scale, shelfTop);
+
+    const LayoutDef& d = L[lay];
+    int used = 0;
+    float y = d.top;
+    for (int r = 0; r < d.n; ++r) {
+        float x = d.originX;
+        float rowH = 0.f;
+        for (int c = 0; c < d.rows[r].n; ++c) {
+            const Cell& cell = d.rows[r].cells[c];
+            float sy = y + cell.dy * scale;
+            float h = -d.rowGap;
+            for (int k = 0; k < cell.n; ++k) {
+                const int id = cell.ids[k];
+                if (!visible[id]) continue;
+                const float wh = SpecH(id);
+                h += wh + d.rowGap;
+                if (sy + wh * scale > shelfTop) {          // would hit the shelf
+                    sy += (wh + d.rowGap) * scale;
+                    continue;
+                }
+                if (used >= W_COUNT) break;
+                Rect& o = out[used++];
+                o.id = id;
+                o.x  = x;
+                o.y  = sy;
+                o.w  = cell.w * scale;
+                o.h  = wh * scale;
+                sy += (wh + d.rowGap) * scale;
+            }
+            if (h < 0.f) h = 0.f;
+            h += cell.dy;
+            if (h > rowH) rowH = h;
+            x += (cell.w + d.colGap) * scale;
+        }
+        y += (rowH + d.rowGap) * scale;
+    }
+    return used;
+}
+
 } // namespace shelllayout
 
 #endif // SHELL_LAYOUT_H

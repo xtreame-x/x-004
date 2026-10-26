@@ -13,9 +13,12 @@
 //        -ld2d1 -ldwrite -luser32 -lgdi32
 //
 //  WHAT IS IN HERE
-//    · Animated wallpaper engine with six presets, a picker, cross-fading swaps.
-//    · Eight desk widgets that flow into three columns, in three sizes, each
-//      individually showable/hideable from Settings > Appearance.
+//    · Animated wallpaper engine with eleven presets, a picker, cross-fades.
+//    · Seven home-page layouts (Classic + Bento, Console, Feed, Matrix, Rail,
+//      Cascade) each with a complete colour theme; picked in Settings >
+//      Appearance from live schematics and persisted to shell.ini.
+//    · Eight desk widgets that flow through the selected layout, in three
+//      sizes, each individually showable/hideable from Settings > Appearance.
 //    · Settings app with System, Appearance and Advanced pages; everything it
 //      changes (wallpaper, widget size/visibility, 12/24-hour clock, motion)
 //      persists to shell.ini.
@@ -139,27 +142,49 @@ static float Clamp(float v, float lo, float hi) { return v < lo ? lo : (v > hi ?
 static float EaseOut(float t) { t = Clamp(t, 0.f, 1.f); float u = 1.f - t; return 1.f - u * u * u; }
 
 // ----------------------------------------------------------------------------
-//  Palette — "Neutral Obsidian Monolith" specification
+//  Palette — "Neutral Obsidian Monolith" specification.
+//
+//  These are deliberately *not* const: every desktop layout ships with a
+//  complete theme (see ThemeDef / ApplyLayout) and rewrites the whole block in
+//  one call, so nothing may capture a value at static-initialisation time.
 // ----------------------------------------------------------------------------
 static const unsigned WHITE = 0xFFFFFF;
 static const unsigned BLACK = 0x000000;
 
-static const unsigned COL_LETTER  = 0x07080A;   // letterbox / window bg
-static const unsigned COL_SURF    = 0x121316;   // cards, flyouts, shelf
-static const unsigned COL_TILE    = 0x171717;   // icon tiles, score boxes
-static const unsigned COL_TILE_HI = 0x202024;   // tile hover
-static const unsigned COL_SEC     = 0x262626;   // secondary surfaces
-static const unsigned COL_ACTIVE  = 0xEDEDED;   // active pill, play button
+static unsigned COL_LETTER  = 0x07080A;   // letterbox / window bg
+static unsigned COL_SURF    = 0x121316;   // cards, flyouts, shelf
+static unsigned COL_TILE    = 0x171717;   // icon tiles, score boxes
+static unsigned COL_TILE_HI = 0x202024;   // tile hover
+static unsigned COL_SEC     = 0x262626;   // secondary surfaces
+static unsigned COL_ACTIVE  = 0xEDEDED;   // active pill, play button
 
-static const unsigned COL_T100 = 0xFFFFFF;
-static const unsigned COL_T90  = 0xF5F5F5;
-static const unsigned COL_T80  = 0xE5E5E5;
-static const unsigned COL_T70  = 0xD4D4D4;
-static const unsigned COL_T50  = 0xA3A3A3;
-static const unsigned COL_T35  = 0x737373;
+static unsigned COL_T100 = 0xFFFFFF;
+static unsigned COL_T90  = 0xF5F5F5;
+static unsigned COL_T80  = 0xE5E5E5;
+static unsigned COL_T70  = 0xD4D4D4;
+static unsigned COL_T50  = 0xA3A3A3;
+static unsigned COL_T35  = 0x737373;
 
-static const unsigned COL_ACC    = 0x34D399;    // confirmed / battery
-static const unsigned COL_ACC_BG = 0x10B981;    // 10% accents only
+static unsigned COL_ACC    = 0x34D399;    // confirmed / battery
+static unsigned COL_ACC_BG = 0x10B981;    // 10% accents only
+
+// Overlay ink. WHITE on every dark theme, a dark ink on the light ones: all
+// the translucent "glass highlight" paints in the shell go through O(), so a
+// light theme turns them into soft shadows without touching a call site.
+static unsigned g_ov = 0xFFFFFF;
+static D2D1_COLOR_F O(float a) { return D2D1::ColorF((UINT32)g_ov, a); }
+
+// Frosted-card material, per theme.
+static unsigned g_cardBase = 0x0E1118;    // glass tint painted under each card
+static float    g_cardAMul = 1.f;         // multiplies every card's own opacity
+static float    g_cardR    = 24.f;        // desk-widget corner radius
+
+// Content drawn *on* an accent or active fill: tick, glyph, label.
+static unsigned g_onActive    = 0x0B0B0D;
+static unsigned g_onActiveDim = 0x4A4A50;
+
+static int   g_layout = 0;                // index into shelllayout::LayoutTable()
+static void ApplyLayout(int lay, bool applyWallpaper);   // defined with THEMES
 
 // Wallpaper presets. Each is a 3-stop vertical gradient; preset 0 is the
 // original #090A0D → #181B22 → #0D0E12 spec.
@@ -172,6 +197,9 @@ static const WpPreset WP[] = {
     { 0x090A16, 0x191A33, 0x07070E, 0x24265A, L"Indigo Nebula",       nullptr },
     { 0x0B0A08, 0x211B12, 0x0A0806, 0x3A2C16, L"Ember Glow",          nullptr },
     { 0x070C0A, 0x14251E, 0x050B08, 0x1E4034, L"Emerald Forest",      nullptr },
+    { 0x0A0620, 0x1E0B3D, 0x060414, 0x6D28D9, L"Neon Grid",           nullptr },
+    { 0xE9EEF5, 0xFAFCFF, 0xD9E2EE, 0x9FB8DA, L"Frost Paper",         nullptr },
+    { 0xF6E8EE, 0xFDF6F8, 0xEBD7E0, 0xD9A8BE, L"Rose Dawn",           nullptr },
     { 0x080A0D, 0x141820, 0x10141C, 0x344055, L"Custom Picture...",    L"" },
 };
 static const int WP_COUNT = (int)(sizeof(WP) / sizeof(WP[0]));
@@ -218,19 +246,19 @@ static void Card(float x, float y, float w, float h, float r, float alpha = 0.52
     if (w <= 0.f || h <= 0.f) return;
     if (shadow) Shadow(x, y, w, h, r, 0.12f, 10);
     // 1. Frosted translucent base (allows wallpaper details to show through)
-    Fill(x, y, w, h, r, C(0x0E1118, alpha));
+    Fill(x, y, w, h, r, C(g_cardBase, Clamp(alpha * g_cardAMul, 0.f, 0.96f)));
     // 2. Subtle glass surface sheen: top ambient light reflection
     float sheenH = std::min(h * 0.45f, 96.f);
     if (sheenH > 4.f) {
         g_rt->PushAxisAlignedClip(R(x, y, w, h), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        Fill(x, y, w, sheenH, r, C(WHITE, 0.038f));
+        Fill(x, y, w, sheenH, r, O( 0.038f));
         g_rt->PopAxisAlignedClip();
     }
     // 3. Crisp optical glass rim (light catching the polished beveled edge)
-    Stroke(x, y, w, h, r, C(WHITE, 0.13f), 1.0f);
+    Stroke(x, y, w, h, r, O( 0.13f), 1.0f);
     // 4. Razor-sharp specular highlight hairline along the top edge
     float inset = std::min(r * 0.65f, 18.f);
-    Line(x + inset, y + 1.f, x + w - inset, y + 1.f, C(WHITE, 0.22f), 1.0f);
+    Line(x + inset, y + 1.f, x + w - inset, y + 1.f, O( 0.22f), 1.0f);
 }
 
 
@@ -819,13 +847,14 @@ enum {
     H_SHELF = 600,                           // + index (shelf icons)
     H_WIN = 700,                             // + kind*8 + part
     H_SET_NAV = 760,                         // + page          (Settings tabs)
-    H_SET_WP = 770,                          // + preset        (wallpaper swatches)
+    H_SET_WP = 830,                         // + preset        (wallpaper swatches)
     H_SET_CUSTOM_WP = 778,                   // choose custom image button
     H_SET_SAMPLE_VID = 779,                  // quick sample MP4 video button
     H_SET_SIZE = 780,                        // + index         (widget size)
     H_SET_WIDGET = 785,                      // + widget        (visibility)
     H_SET_MISC = 796,                        // + 0 clock, +1 motion
     H_SET_RESET = 799,
+    H_SET_LAYOUT = 820,                      // + layout     (layout & theme picker)
     H_CTX = 800,                             // + item
     H_UNLOCK = 850, H_FILE = 870,            // + row
     H_DESK = 900,
@@ -1019,6 +1048,8 @@ static void SaveSettings() {
     WritePrivateProfileStringW(L"shell", L"rainmeter_date", g_rainmeterDate ? L"1" : L"0", p.c_str());
     swprintf(num, 32, L"%d", (int)std::lround(g_wpDim * 100.f));
     WritePrivateProfileStringW(L"shell", L"wp_dim", num, p.c_str());
+    swprintf(num, 32, L"%d", g_layout);
+    WritePrivateProfileStringW(L"shell", L"layout", num, p.c_str());
 }
 
 static void LoadSettings() {
@@ -1058,6 +1089,9 @@ static void LoadSettings() {
     g_wpDim   = Clamp(GetPrivateProfileIntW(L"shell", L"wp_dim", 32, p.c_str()) / 100.f, 0.f, 0.85f);
     g_tog[TOG_LIVE_WP] = g_motion;
     g_togSub[TOG_LIVE_WP] = g_motion ? L"Particles & motion on" : L"Paused (reduced motion)";
+    // The layout carries the whole theme, so it has to be applied before the
+    // first frame; the wallpaper itself comes from the saved preset above.
+    ApplyLayout(GetPrivateProfileIntW(L"shell", L"layout", 0, p.c_str()), false);
 }
 
 // ----------------------------------------------------------------------------
@@ -1309,6 +1343,95 @@ static void SetCustomWallpaper(const std::wstring& path) {
     ShowToast(L"Loaded Custom Wallpaper", (wchar_t)0xE790);
 }
 
+// ----------------------------------------------------------------------------
+//  Desktop layouts and their themes.
+//
+//  Every layout in shell_layout.h ships with a complete restyle: surfaces, the
+//  six text steps, the accent, the glass material, the card radius, the
+//  overlay ink and a matching wallpaper. ApplyLayout() rewrites the whole
+//  palette in one call, so no drawing site knows that themes exist. THEMES[i]
+//  dresses shelllayout layout i — the two arrays are indexed together.
+// ----------------------------------------------------------------------------
+struct ThemeDef {
+    const wchar_t* name;                    // shown next to the layout name
+    unsigned letter, surf, tile, tileHi, sec, active;
+    unsigned t100, t90, t80, t70, t50, t35;
+    unsigned acc, accBg;
+    unsigned cardBase, ov, onActive, onActiveDim;
+    float cardR, cardAMul, wpDim;
+    int   wp;                               // wallpaper preset index
+};
+
+static const ThemeDef THEMES[shelllayout::LAY_COUNT] = {
+    // 0 Classic — Neutral Obsidian Monolith (the original specification).
+    { L"Obsidian Monolith",
+      0x07080A, 0x121316, 0x171717, 0x202024, 0x262626, 0xEDEDED,
+      0xFFFFFF, 0xF5F5F5, 0xE5E5E5, 0xD4D4D4, 0xA3A3A3, 0x737373,
+      0x34D399, 0x10B981, 0x0E1118, 0xFFFFFF, 0x0B0B0D, 0x4A4A50,
+      24.f, 1.00f, 0.32f, 0 },
+    // 1 Bento — Neo Tokyo: deep indigo glass, cyan/magenta neon, sharp tiles.
+    { L"Neo Tokyo",
+      0x07051C, 0x120E2E, 0x191338, 0x241B4C, 0x2A2154, 0xFF4FA3,
+      0xFFFFFF, 0xF3F1FF, 0xE2DDFF, 0xC9C2F0, 0x9E96C4, 0x6F679A,
+      0x22D3EE, 0x0891B2, 0x0C0824, 0xFFFFFF, 0x1B0010, 0x59133A,
+      10.f, 1.00f, 0.30f, 7 },
+    // 2 Console — Terminal: phosphor green on carbon, monospace-sharp corners.
+    { L"Terminal Phosphor",
+      0x030604, 0x0A100D, 0x0E1613, 0x14201C, 0x1A2823, 0x35E06B,
+      0xE8FFF1, 0xD2F5E0, 0xB4E8C8, 0x8FD1A8, 0x6BA985, 0x4A7D61,
+      0x35E06B, 0x16A34A, 0x060D0A, 0xFFFFFF, 0x04140A, 0x1F6B3A,
+      4.f, 1.00f, 0.34f, 3 },
+    // 3 Feed — Nordic Frost: light paper, cobalt accent, soft grey ink.
+    { L"Nordic Frost",
+      0xE7ECF3, 0xFFFFFF, 0xEDF1F7, 0xE1E8F1, 0xD9E1EB, 0x1F2A44,
+      0x0F172A, 0x1E293B, 0x334155, 0x475569, 0x64748B, 0x94A3B8,
+      0x2563EB, 0x1D4ED8, 0xFFFFFF, 0x1F2A44, 0xFFFFFF, 0xAEB9D0,
+      18.f, 1.18f, 0.10f, 8 },
+    // 4 Matrix — Solar Ember: warm carbon, amber indicators, rounded 14.
+    { L"Solar Ember",
+      0x0B0705, 0x1A1310, 0x221915, 0x2E221C, 0x38281F, 0xF5A524,
+      0xFFF8EF, 0xFBEEDD, 0xEFDCC6, 0xDCC5A8, 0xB79C80, 0x8A735C,
+      0xF5A524, 0xD97706, 0x140D09, 0xFFFFFF, 0x1A0F00, 0x6B4406,
+      14.f, 1.00f, 0.34f, 5 },
+    // 5 Rail — Rose Quartz: warm white porcelain, rose accent, airy 22.
+    { L"Rose Quartz",
+      0xF3ECEF, 0xFFFFFF, 0xF6EFF3, 0xEFE4EC, 0xE9DCE5, 0xBE185D,
+      0x1F1A1D, 0x2E262B, 0x463B42, 0x5F5158, 0x8A7A82, 0xA89AA1,
+      0xDB2777, 0xBE185D, 0xFFFFFF, 0x2A1F26, 0xFFFFFF, 0xF5C6D8,
+      22.f, 1.18f, 0.10f, 9 },
+    // 6 Cascade — Aurora: deep teal glass, aqua accent, very round cards.
+    { L"Aurora Teal",
+      0x04120F, 0x0A1D1A, 0x0F2622, 0x15332E, 0x1B3E38, 0x5EEAD4,
+      0xEFFFFB, 0xD6F7F0, 0xB4EBE1, 0x8CD9CC, 0x66B5AC, 0x47877F,
+      0x2DD4BF, 0x14B8A6, 0x061512, 0xFFFFFF, 0x04231E, 0x1F6B60,
+      26.f, 1.00f, 0.32f, 2 },
+};
+
+// Rewrites every colour the shell draws with. applyWallpaper additionally jumps
+// to the theme's wallpaper and its recommended contrast, but never replaces a
+// custom picture or a running video (the last preset is always "Custom").
+static void ApplyLayout(int lay, bool applyWallpaper) {
+    int n = 0;
+    shelllayout::LayoutTable(n);
+    if (lay < 0 || lay >= n) lay = 0;
+    g_layout = lay;
+    const ThemeDef& t = THEMES[lay];
+
+    COL_LETTER = t.letter; COL_SURF = t.surf;   COL_TILE = t.tile;
+    COL_TILE_HI = t.tileHi; COL_SEC = t.sec;    COL_ACTIVE = t.active;
+    COL_T100 = t.t100; COL_T90 = t.t90; COL_T80 = t.t80;
+    COL_T70 = t.t70;   COL_T50 = t.t50; COL_T35 = t.t35;
+    COL_ACC = t.acc;   COL_ACC_BG = t.accBg;
+    g_ov = t.ov;  g_cardBase = t.cardBase;  g_cardR = t.cardR;  g_cardAMul = t.cardAMul;
+    g_onActive = t.onActive;  g_onActiveDim = t.onActiveDim;
+
+    if (applyWallpaper) {
+        g_wpDim = t.wpDim;
+        if (g_wp != WP_COUNT - 1 && g_wp != t.wp) SetWallpaper(t.wp);
+        SaveSettings();
+    }
+}
+
 static void PromptCustomWallpaper(HWND hwnd) {
     wchar_t filename[MAX_PATH] = L"";
     OPENFILENAMEW ofn = { sizeof(OPENFILENAMEW) };
@@ -1366,16 +1489,16 @@ static void DrawLiveWallpaperParticles() {
         float pulse = 0.65f + 0.35f * std::sin(p.phase * 2.f + t * 1.6f);
         float a = Clamp(p.alpha * pulse, 0.05f, 0.90f);
 
-        // Soft outer ambient aura glow (emerald accent)
-        Disc(p.x, p.y, p.size * 2.5f, C(COL_ACTIVE, a * 0.25f));
-        // Soft white core
+        // Soft accent aura glow
+        Disc(p.x, p.y, p.size * 2.5f, C(COL_ACC, a * 0.25f));
+        // Soft white core — always white, it is a light source on the wallpaper
         Disc(p.x, p.y, p.size, C(WHITE, a * 0.80f));
     }
 }
 
 static void DrawWallpaper() {
     // Base deep dark canvas
-    g_br->SetColor(C(0x06080A));
+    g_br->SetColor(C(COL_LETTER));
     g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_br);
 
     if (g_videoWpActive) {
@@ -1407,7 +1530,7 @@ static void DrawWallpaper() {
 
             // Dark ambient atmospheric scrim for high contrast and text readability (accessibility)
             float scrimAlpha = Clamp(g_wpDim, 0.05f, 0.85f);
-            g_br->SetColor(C(0x06080C, scrimAlpha));
+            g_br->SetColor(C(COL_LETTER, scrimAlpha));
             g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_br);
         }
     } else if (g_wpBitmap) {
@@ -1430,7 +1553,7 @@ static void DrawWallpaper() {
 
             // Dark ambient atmospheric scrim for high contrast and text readability (accessibility)
             float scrimAlpha = Clamp(g_wpDim, 0.05f, 0.85f);
-            g_br->SetColor(C(0x06080C, scrimAlpha));
+            g_br->SetColor(C(COL_LETTER, scrimAlpha));
             g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_br);
         }
     } else {
@@ -1461,7 +1584,7 @@ static void DrawWallpaper() {
     // Faint horizontal hairlines give the wallpaper glass texture
     for (int i = 1; i < 9; ++i) {
         float y = (DH / 9.f) * (float)i;
-        Line(0.f, y, DW, y, C(WHITE, 0.012f));
+        Line(0.f, y, DW, y, O( 0.012f));
     }
 }
 
@@ -1473,7 +1596,7 @@ static void Label(const std::wstring& s, float x, float y, float w, unsigned rgb
 }
 
 static void Meter(float x, float y, float w, float v, unsigned rgb) {
-    Fill(x, y, w, 6.f, 3.f, C(WHITE, 0.10f));
+    Fill(x, y, w, 6.f, 3.f, O( 0.10f));
     Fill(x, y, w * Clamp(v, 0.f, 1.f), 6.f, 3.f, C(rgb, 0.95f));
 }
 
@@ -1498,9 +1621,9 @@ static void Sparkline(float x, float y, float w, float h, const float* v, int n,
 }
 
 static void Checkbox(float x, float y, float s, bool on, bool hov) {
-    Fill(x, y, s, s, 5.f, on ? C(COL_ACC, 0.95f) : C(WHITE, hov ? 0.10f : 0.05f));
-    if (!on) Stroke(x, y, s, s, 5.f, C(WHITE, hov ? 0.34f : 0.20f));
-    else Glyph((wchar_t)0xE73E, x + s * 0.5f, y + s * 0.5f, s * 0.58f, 0x0B0B0D);
+    Fill(x, y, s, s, 5.f, on ? C(COL_ACC, 0.95f) : O( hov ? 0.10f : 0.05f));
+    if (!on) Stroke(x, y, s, s, 5.f, O( hov ? 0.34f : 0.20f));
+    else Glyph((wchar_t)0xE73E, x + s * 0.5f, y + s * 0.5f, s * 0.58f, g_onActive);
 }
 
 // Quick-settings toggle tile
@@ -1508,27 +1631,27 @@ static void ToggleTile(float x, float y, float w, float h, int i) {
     bool on = g_tog[i];
     bool hov = (g_hover == H_TOG0 + i);
     if (on) {
-        Fill(x, y, w, h, 16.f, C(COL_T100, hov ? 0.98f : 0.93f));
+        Fill(x, y, w, h, 16.f, C(COL_ACTIVE, hov ? 0.98f : 0.93f));
     } else {
         Fill(x, y, w, h, 16.f, hov ? C(COL_TILE_HI, 0.98f) : C(COL_TILE, 0.90f));
-        Stroke(x, y, w, h, 16.f, C(WHITE, hov ? 0.11f : 0.05f));
+        Stroke(x, y, w, h, 16.f, O( hov ? 0.11f : 0.05f));
     }
-    unsigned fg = on ? 0x101012 : COL_T90;
+    unsigned fg = on ? g_onActive : COL_T90;
     float cy = y + 26.f;
-    Disc(x + 32.f, cy, 15.f, on ? C(BLACK, 0.07f) : C(WHITE, 0.06f));
+    Disc(x + 32.f, cy, 15.f, on ? C(BLACK, 0.07f) : O( 0.06f));
     Glyph(TOG_GLYPH[i], x + 32.f, cy, 15.f, fg, 0.95f);
-    Txt(TOG_NAME[i], x + 56.f, y + 12.f, w - 66.f, 28.f, F_SEMI, 12.5f, 600, on ? 0x101012 : COL_T90, 0, 1.f);
-    Txt(g_togSub[i].c_str(), x + 56.f, y + 34.f, w - 66.f, 22.f, F_UI, 10.5f, 400, on ? 0x4A4A50 : COL_T35, 0, 1.f);
+    Txt(TOG_NAME[i], x + 56.f, y + 12.f, w - 66.f, 28.f, F_SEMI, 12.5f, 600, on ? g_onActive : COL_T90, 0, 1.f);
+    Txt(g_togSub[i].c_str(), x + 56.f, y + 34.f, w - 66.f, 22.f, F_UI, 10.5f, 400, on ? g_onActiveDim : COL_T35, 0, 1.f);
     AddHit(x, y, w, h, H_TOG0 + i);
 }
 
 // Slider with knob; registers its own hit region.
 static void SliderDraw(float x, float y, float w, float v, int id, float knob = 8.f) {
     const float cy = y + 16.f;
-    Fill(x, cy - 2.5f, w, 5.f, 2.5f, C(WHITE, 0.13f));
+    Fill(x, cy - 2.5f, w, 5.f, 2.5f, O( 0.13f));
     Fill(x, cy - 2.5f, w * Clamp(v, 0.f, 1.f), 5.f, 2.5f, C(COL_T80, 0.92f));
     float kx = x + w * Clamp(v, 0.f, 1.f);
-    if (g_hover == id) Disc(kx, cy, knob + 5.f, C(WHITE, 0.10f));
+    if (g_hover == id) Disc(kx, cy, knob + 5.f, O( 0.10f));
     Disc(kx, cy, knob, C(COL_T100, 0.97f));
     AddHit(x - 8.f, y, w + 16.f, 32.f, id);
 }
@@ -1538,10 +1661,10 @@ static void RingButton(float cx, float cy, float r, int id, wchar_t glyph, float
     bool hov = (g_hover == id);
     if (primary) Disc(cx, cy, r, C(COL_ACTIVE, hov ? 1.f : 0.93f));
     else {
-        if (hov) Disc(cx, cy, r, C(WHITE, 0.08f));
-        Ring(cx, cy, r, C(WHITE, hov ? 0.16f : 0.08f), 1.f);
+        if (hov) Disc(cx, cy, r, O( 0.08f));
+        Ring(cx, cy, r, O( hov ? 0.16f : 0.08f), 1.f);
     }
-    Glyph(glyph, cx, cy, size, primary ? 0x0B0B0D : COL_T90, 0.95f);
+    Glyph(glyph, cx, cy, size, primary ? g_onActive : COL_T90, 0.95f);
     AddHit(cx - r, cy - r, r * 2.f, r * 2.f, id);
 }
 
@@ -1549,7 +1672,7 @@ static void RingButton(float cx, float cy, float r, int id, wchar_t glyph, float
 //  Desk widget: clock
 // ----------------------------------------------------------------------------
 static void DrawClockCard(float x, float y, float w, float h) {
-    Card(x, y, w, h, 24.f, 0.78f);
+    Card(x, y, w, h, g_cardR, 0.78f);
 
     if (g_rainmeterDate) {
         // ====================================================================
@@ -1562,19 +1685,19 @@ static void DrawClockCard(float x, float y, float w, float h) {
 
         // 2. Minimalist AM/PM or 24H Capsule Tag
         std::wstring tag = g_clock24 ? L"24H" : (st.wHour >= 12 ? L"PM" : L"AM");
-        Fill(x + w - 74.f, y + 20.f, 46.f, 20.f, 10.f, C(WHITE, 0.06f));
-        Stroke(x + w - 74.f, y + 20.f, 46.f, 20.f, 10.f, C(WHITE, 0.12f));
+        Fill(x + w - 74.f, y + 20.f, 46.f, 20.f, 10.f, O( 0.06f));
+        Stroke(x + w - 74.f, y + 20.f, 46.f, 20.f, 10.f, O( 0.12f));
         Txt(tag.c_str(), x + w - 74.f, y + 22.f, 46.f, 16.f, F_SEMI, 10.f, 600, COL_ACC, 1, 1.f);
 
         // 3. Hairline accent separator
-        Line(x + 28.f, y + 48.f, x + w - 28.f, y + 48.f, C(WHITE, 0.07f), 1.f);
+        Line(x + 28.f, y + 48.f, x + w - 28.f, y + 48.f, O( 0.07f), 1.f);
 
         // 4. Large Digital Time in Anurati Font (e.g. "10:17")
         Txt(TimeHM(), x + 24.f, y + 54.f, w - 140.f, 76.f, F_ANURATI, 56.f, 400, COL_T100, 0, 1.f);
 
         // 5. Rainmeter Seconds Progress Ring
         float cx = x + w - 66.f, cy = y + 104.f;
-        Ring(cx, cy, 27.f, C(WHITE, 0.07f), 3.f);
+        Ring(cx, cy, 27.f, O( 0.07f), 3.f);
         float a0 = -1.5707963f;
         float a1 = a0 + 6.2831853f * ((float)st.wSecond / 60.f);
         const int seg = 34;
@@ -1589,8 +1712,8 @@ static void DrawClockCard(float x, float y, float w, float h) {
 
         // 6. Rainmeter Date Capsule Badge (e.g. "26  •  OCTOBER  2026")
         float bw = w - 150.f, bh = 30.f, by = y + 144.f;
-        Fill(x + 28.f, by, bw, bh, 15.f, C(WHITE, 0.045f));
-        Stroke(x + 28.f, by, bw, bh, 15.f, C(WHITE, 0.09f), 1.f);
+        Fill(x + 28.f, by, bw, bh, 15.f, O( 0.045f));
+        Stroke(x + 28.f, by, bw, bh, 15.f, O( 0.09f), 1.f);
         Disc(x + 42.f, by + 15.f, 3.5f, C(COL_ACC, 0.95f));
         Txt(RainmeterDateUpper(), x + 52.f, by + 7.f, bw - 60.f, 18.f, F_SEMI, 11.5f, 600, COL_T90, 0, 1.f);
     } else {
@@ -1602,7 +1725,7 @@ static void DrawClockCard(float x, float y, float w, float h) {
         // seconds ring
         SYSTEMTIME st; GetLocalTime(&st);
         float cx = x + w - 66.f, cy = y + h * 0.5f;
-        Ring(cx, cy, 27.f, C(WHITE, 0.07f), 3.f);
+        Ring(cx, cy, 27.f, O( 0.07f), 3.f);
         float a0 = -1.5707963f;
         float a1 = a0 + 6.2831853f * ((float)st.wSecond / 60.f);
         const int seg = 34;
@@ -1621,8 +1744,8 @@ static void DrawClockCard(float x, float y, float w, float h) {
 //  Desk widget: weather
 // ----------------------------------------------------------------------------
 static void DrawWeather(float x, float y, float w, float h) {
-    Card(x, y, w, h, 24.f, 0.78f);
-    Disc(x + 44.f, y + 46.f, 19.f, C(WHITE, 0.06f));
+    Card(x, y, w, h, g_cardR, 0.78f);
+    Disc(x + 44.f, y + 46.f, 19.f, O( 0.06f));
     Glyph(g_weatherGlyph, x + 44.f, y + 46.f, 18.f, COL_T90);
     Txt(g_weatherTempStr.c_str(), x + 24.f, y + 78.f, 140.f, 66.f, F_SEMI, 46.f, 600, COL_T100, 0, 1.f);
     Txt(g_weatherCond.c_str(), x + 26.f, y + 142.f, w - 50.f, 24.f, F_UI, 13.f, 400, COL_T50, 0, 1.f);
@@ -1634,7 +1757,7 @@ static void DrawWeather(float x, float y, float w, float h) {
 //  Desk widget: finance
 // ----------------------------------------------------------------------------
 static void DrawFinance(float x, float y, float w, float h) {
-    Card(x, y, w, h, 24.f, 0.78f);
+    Card(x, y, w, h, g_cardR, 0.78f);
     Txt(L"BTC / USD", x + 26.f, y + 20.f, 140.f, 20.f, F_UI, 11.5f, 600, COL_T35, 0, 1.f);
     Txt(g_btcPriceStr.c_str(), x + 24.f, y + 42.f, 240.f, 44.f, F_SEMI, 30.f, 600, COL_T100, 0, 1.f);
     unsigned changeCol = g_btcChangeVal >= 0.f ? COL_ACC : 0xF87171;
@@ -1647,7 +1770,7 @@ static void DrawFinance(float x, float y, float w, float h) {
 //  Desk widget: notes
 // ----------------------------------------------------------------------------
 static void DrawNotesCard(float x, float y, float w, float h) {
-    Card(x, y, w, h, 24.f, 0.80f);
+    Card(x, y, w, h, g_cardR, 0.80f);
     Txt(L"Notes", x + 26.f, y + 18.f, 200.f, 30.f, F_SEMI, 15.f, 600, COL_T90, 0, 1.f);
     Txt(std::to_wstring(g_notes.size()) + L" items", x + w - 130.f, y + 24.f, 104.f, 20.f,
         F_UI, 11.f, 400, COL_T35, 2, 1.f);
@@ -1655,7 +1778,7 @@ static void DrawNotesCard(float x, float y, float w, float h) {
     float ry = y + 56.f;
     for (int i = 0; i < (int)g_notes.size() && i < 5; ++i) {
         bool hov = g_hover == H_NOTE + i;
-        if (hov) Fill(x + 16.f, ry - 10.f, w - 32.f, 42.f, 10.f, C(WHITE, 0.04f));
+        if (hov) Fill(x + 16.f, ry - 10.f, w - 32.f, 42.f, 10.f, O( 0.04f));
         Checkbox(x + 26.f, ry - 2.f, 18.f, g_notes[i].done, hov);
         Txt(g_notes[i].text, x + 56.f, ry - 8.f, w - 84.f, 30.f, F_UI, 13.f, 400,
             g_notes[i].done ? COL_T35 : COL_T80, 0, 1.f);
@@ -1671,8 +1794,8 @@ static void DrawNotesCard(float x, float y, float w, float h) {
     // add-row
     bool hov = g_hover == H_ADDNOTE;
     float ay = y + h - 52.f;
-    Fill(x + 16.f, ay, w - 32.f, 38.f, 12.f, C(WHITE, hov ? 0.06f : 0.03f));
-    Stroke(x + 16.f, ay, w - 32.f, 38.f, 12.f, C(WHITE, hov ? 0.12f : 0.06f));
+    Fill(x + 16.f, ay, w - 32.f, 38.f, 12.f, O( hov ? 0.06f : 0.03f));
+    Stroke(x + 16.f, ay, w - 32.f, 38.f, 12.f, O( hov ? 0.12f : 0.06f));
     Glyph((wchar_t)0xE710, x + 40.f, ay + 19.f, 11.f, COL_T50);
     Txt(L"Add a note", x + 58.f, ay + 4.f, 200.f, 30.f, F_UI, 12.f, 500, COL_T50, 0, 1.f);
     AddHit(x + 16.f, ay, w - 32.f, 38.f, H_ADDNOTE);
@@ -1682,7 +1805,7 @@ static void DrawNotesCard(float x, float y, float w, float h) {
 //  Desk widget: media player
 // ----------------------------------------------------------------------------
 static void DrawMediaCard(float x, float y, float w, float h) {
-    Card(x, y, w, h, 24.f, 0.82f);
+    Card(x, y, w, h, g_cardR, 0.82f);
     // Album art: procedural duotone gradient + concentric rings.
     float ax = x + 22.f, ay = y + 22.f, as = 92.f;
     g_br->SetColor(C(0x1B1E24));
@@ -1691,7 +1814,7 @@ static void DrawMediaCard(float x, float y, float w, float h) {
     Ring(ax + as * 0.5f, ay + as * 0.5f, as * 0.28f, C(0x3D4552, 0.9f), 1.2f);
     Ring(ax + as * 0.5f, ay + as * 0.5f, as * 0.17f, C(0x4A5260, 0.9f), 1.2f);
     Disc(ax + as * 0.5f, ay + as * 0.5f, as * 0.06f, C(0x0A0A0C, 0.9f));
-    Stroke(ax, ay, as, as, 16.f, C(WHITE, 0.07f));
+    Stroke(ax, ay, as, as, 16.f, O( 0.07f));
 
     Txt(L"Neutral Obsidian", x + 130.f, y + 26.f, w - 156.f, 28.f, F_SEMI, 14.5f, 600, COL_T90, 0, 1.f);
     Txt(L"Buffy · Ambient Works", x + 130.f, y + 52.f, w - 156.f, 22.f, F_UI, 11.5f, 400, COL_T35, 0, 1.f);
@@ -1700,7 +1823,7 @@ static void DrawMediaCard(float x, float y, float w, float h) {
     const float wavT = g_motion ? (float)g_clockT : 0.f;
     for (int i = 0; i < 22; ++i) {
         float bh = 4.f + 12.f * std::fabs(std::sin((float)i * 0.9f + wavT * 1.6f));
-        Fill(x + 130.f + i * 6.f, y + 78.f - bh * 0.5f, 3.f, bh, 1.5f, C(WHITE, 0.14f));
+        Fill(x + 130.f + i * 6.f, y + 78.f - bh * 0.5f, 3.f, bh, 1.5f, O( 0.14f));
     }
 
     // Progress + controls
@@ -1716,7 +1839,7 @@ static void DrawMediaCard(float x, float y, float w, float h) {
     Glyph((wchar_t)0xE892, x + w * 0.5f - 44.f, cy, 13.f, g_hover == H_PREV ? COL_T90 : COL_T50);
     float pr = 17.f;
     Disc(x + w * 0.5f, cy, pr, C(COL_ACTIVE, g_hover == H_PLAY ? 1.f : 0.94f));
-    Glyph(g_playing ? (wchar_t)0xE769 : (wchar_t)0xE768, x + w * 0.5f, cy, 11.f, 0x0B0B0D);
+    Glyph(g_playing ? (wchar_t)0xE769 : (wchar_t)0xE768, x + w * 0.5f, cy, 11.f, g_onActive);
     Glyph((wchar_t)0xE893, x + w * 0.5f + 44.f, cy, 13.f, g_hover == H_NEXT ? COL_T90 : COL_T50);
     Glyph((wchar_t)0xE8EE, x + w - 34.f, cy, 12.f, hovR ? COL_T90 : COL_T35);
 
@@ -1731,7 +1854,7 @@ static void DrawMediaCard(float x, float y, float w, float h) {
 //  Desk widget: system meters
 // ----------------------------------------------------------------------------
 static void DrawSystemCard(float x, float y, float w, float h) {
-    Card(x, y, w, h, 24.f, 0.76f);
+    Card(x, y, w, h, g_cardR, 0.76f);
     Txt(L"System", x + 26.f, y + 18.f, 160.f, 28.f, F_SEMI, 15.f, 600, COL_T90, 0, 1.f);
     Disc(x + w - 100.f, y + 32.f, 9.f, C(COL_ACC_BG, 0.18f));
     Disc(x + w - 100.f, y + 32.f, 3.f, C(COL_ACC, 0.95f));
@@ -1753,7 +1876,7 @@ static void DrawSystemCard(float x, float y, float w, float h) {
 //  Desk widget: shortcuts cheat-sheet
 // ----------------------------------------------------------------------------
 static void DrawShortcutsCard(float x, float y, float w, float h) {
-    Card(x, y, w, h, 24.f, 0.72f);
+    Card(x, y, w, h, g_cardR, 0.72f);
     Txt(L"Shortcuts", x + 26.f, y + 18.f, 200.f, 28.f, F_SEMI, 15.f, 600, COL_T90, 0, 1.f);
     struct K { const wchar_t* key; const wchar_t* what; };
     static const K keys[] = {
@@ -1767,8 +1890,8 @@ static void DrawShortcutsCard(float x, float y, float w, float h) {
         float kw = 0.f;
         size_t n = wcslen(keys[i].key);
         kw = 26.f + (float)n * 6.4f;
-        Fill(x + 26.f, ry, kw, 26.f, 7.f, C(WHITE, 0.05f));
-        Stroke(x + 26.f, ry, kw, 26.f, 7.f, C(WHITE, 0.10f));
+        Fill(x + 26.f, ry, kw, 26.f, 7.f, O( 0.05f));
+        Stroke(x + 26.f, ry, kw, 26.f, 7.f, O( 0.10f));
         Txt(keys[i].key, x + 26.f, ry + 3.f, kw, 20.f, F_MONO, 10.5f, 400, COL_T70, 1, 1.f);
         Txt(keys[i].what, x + 34.f + kw, ry + 3.f, w - 70.f - kw, 20.f, F_UI, 11.5f, 400, COL_T50, 0, 1.f);
         ry += 40.f;
@@ -1779,13 +1902,13 @@ static void DrawShortcutsCard(float x, float y, float w, float h) {
 //  Desk widget: recent files
 // ----------------------------------------------------------------------------
 static void DrawRecentCard(float x, float y, float w, float h) {
-    Card(x, y, w, h, 24.f, 0.74f);
+    Card(x, y, w, h, g_cardR, 0.74f);
     Txt(L"Recent", x + 26.f, y + 18.f, 160.f, 28.f, F_SEMI, 15.f, 600, COL_T90, 0, 1.f);
     Txt(L"Open Files", x + w - 120.f, y + 22.f, 94.f, 20.f, F_UI, 11.f, 500, COL_T50, 2, 1.f);
     float ry = y + 58.f;
     for (int i = 0; i < 3; ++i) {
         float cx = x + 44.f;
-        Disc(cx, ry + 14.f, 16.f, C(WHITE, 0.05f));
+        Disc(cx, ry + 14.f, 16.f, O( 0.05f));
         Glyph(FILES[i + 2].glyph, cx, ry + 14.f, 11.f, COL_T70);
         Txt(FILES[i + 2].name, x + 70.f, ry + 2.f, w - 96.f, 20.f, F_UI, 11.5f, 500, COL_T80, 0, 1.f);
         Txt(FILES[i + 2].when, x + 70.f, ry + 20.f, w - 96.f, 18.f, F_UI, 10.f, 400, COL_T35, 0, 1.f);
@@ -1818,21 +1941,28 @@ static void InWidget(float x, float y, float s, F fn) {
 
 static void DrawDesktopWidgets() {
     shelllayout::Rect placed[shelllayout::W_COUNT];
-    // The shelf starts at 1096; widgets are clipped out above 1088 so they can
-    // never slide underneath it at the largest size.
-    const int n = shelllayout::Compute(g_widgetOn, g_widgetScale, 96.f, 88.f, 18.f, 18.f, 1088.f, placed);
+    // The shelf starts at 1096. Each layout is fitted to the band above it (and
+    // to the canvas) before it is walked, so a widget can never slide under the
+    // shelf; anything that still would is dropped by ComputeLayout().
+    const float fit = shelllayout::FitLayout(g_layout, g_widgetOn, g_widgetScale, 1088.f);
+    const int n = shelllayout::ComputeLayout(g_layout, g_widgetOn, fit, 1088.f, placed);
     for (int i = 0; i < n; ++i) {
-        const int id = placed[i].id;
-        InWidget(placed[i].x, placed[i].y, g_widgetScale, [id] {
+        const shelllayout::Rect r = placed[i];
+        // Cards are handed their real size: layouts stretch width, and every
+        // drawer anchors its right-hand pieces to w. Hit regions are mapped
+        // through the same fitted scale inside InWidget().
+        const int id = r.id;
+        const float w = r.w / fit, h = r.h / fit;
+        InWidget(r.x, r.y, fit, [id, w, h] {
             switch (id) {
-            case shelllayout::W_CLOCK:     DrawClockCard(0.f, 0.f, 420.f, 200.f); break;
-            case shelllayout::W_WEATHER:   DrawWeather(0.f, 0.f, 300.f, 200.f); break;
-            case shelllayout::W_FINANCE:   DrawFinance(0.f, 0.f, 300.f, 200.f); break;
-            case shelllayout::W_NOTES:     DrawNotesCard(0.f, 0.f, 420.f, 352.f); break;
-            case shelllayout::W_MEDIA:     DrawMediaCard(0.f, 0.f, 420.f, 240.f); break;
-            case shelllayout::W_SYSTEM:    DrawSystemCard(0.f, 0.f, 300.f, 206.f); break;
-            case shelllayout::W_RECENT:    DrawRecentCard(0.f, 0.f, 300.f, 216.f); break;
-            case shelllayout::W_SHORTCUTS: DrawShortcutsCard(0.f, 0.f, 300.f, 232.f); break;
+            case shelllayout::W_CLOCK:     DrawClockCard(0.f, 0.f, w, h); break;
+            case shelllayout::W_WEATHER:   DrawWeather(0.f, 0.f, w, h); break;
+            case shelllayout::W_FINANCE:   DrawFinance(0.f, 0.f, w, h); break;
+            case shelllayout::W_NOTES:     DrawNotesCard(0.f, 0.f, w, h); break;
+            case shelllayout::W_MEDIA:     DrawMediaCard(0.f, 0.f, w, h); break;
+            case shelllayout::W_SYSTEM:    DrawSystemCard(0.f, 0.f, w, h); break;
+            case shelllayout::W_RECENT:    DrawRecentCard(0.f, 0.f, w, h); break;
+            case shelllayout::W_SHORTCUTS: DrawShortcutsCard(0.f, 0.f, w, h); break;
             default: break;
             }
         });
@@ -1852,8 +1982,8 @@ static const int PINNED_N = (int)(sizeof(PINNED) / sizeof(PINNED[0]));
 static float ShelfWidth() { return 28.f + 56.f * (float)(PINNED_N + 1) + 8.f * (float)PINNED_N; }
 
 static void BatteryIcon(float x, float y, float w, float h, float v) {
-    Stroke(x, y, w, h, 4.f, C(WHITE, 0.35f));
-    Fill(x + w + 1.f, y + h * 0.32f, 3.f, h * 0.36f, 1.5f, C(WHITE, 0.35f));
+    Stroke(x, y, w, h, 4.f, O( 0.35f));
+    Fill(x + w + 1.f, y + h * 0.32f, 3.f, h * 0.36f, 1.5f, O( 0.35f));
     float iw = (w - 6.f) * Clamp(v, 0.f, 1.f);
     if (iw > 0.5f) Fill(x + 3.f, y + 3.f, iw, h - 6.f, 2.f, C(COL_T90, 0.92f));
 }
@@ -2002,11 +2132,11 @@ static void AppIcon(int appIndex, float cx, float cy, float tile, float glyphSiz
     float x = cx - tile * 0.5f, y = cy - tile * 0.5f;
 
     if (hovered) {
-        Fill(x, y, tile, tile, r, C(WHITE, 0.12f));
-        Stroke(x, y, tile, tile, r, C(WHITE, 0.25f), 1.2f);
+        Fill(x, y, tile, tile, r, O( 0.12f));
+        Stroke(x, y, tile, tile, r, O( 0.25f), 1.2f);
     } else {
-        Fill(x, y, tile, tile, r, C(WHITE, 0.045f));
-        Stroke(x, y, tile, tile, r, C(WHITE, 0.09f), 1.0f);
+        Fill(x, y, tile, tile, r, O( 0.045f));
+        Stroke(x, y, tile, tile, r, O( 0.09f), 1.0f);
     }
 
     if (pBmp) {
@@ -2041,8 +2171,8 @@ static void DrawShelf() {
     float ix = x + 14.f + 28.f;       // centre of launcher button
     // Launcher button
     bool lh = (g_hover == H_LAUNCHER) || (g_panel == PANEL_LAUNCH);
-    Disc(ix, y + h * 0.5f, 22.f, lh ? C(COL_T100, 0.96f) : C(WHITE, 0.08f));
-    Glyph((wchar_t)0xE700, ix, y + h * 0.5f, 14.f, lh ? 0x0B0B0D : COL_T90);
+    Disc(ix, y + h * 0.5f, 22.f, lh ? C(COL_T100, 0.96f) : O( 0.08f));
+    Glyph((wchar_t)0xE700, ix, y + h * 0.5f, 14.f, lh ? g_onActive : COL_T90);
     AddHit(ix - 26.f, y + 8.f, 52.f, h - 16.f, H_LAUNCHER);
 
     for (int i = 0; i < PINNED_N; ++i) {
@@ -2067,7 +2197,7 @@ static void DrawTray() {
     float x = DW - 32.f - TRAY_W, y = SHELF_Y + (SHELF_H - TRAY_H) * 0.5f;
     bool hov = (g_hover == H_TRAY);
     Fill(x, y, TRAY_W, TRAY_H, 22.f, C(hov ? COL_SURF : COL_SURF, hov ? 0.98f : 0.82f));
-    Stroke(x, y, TRAY_W, TRAY_H, 22.f, C(WHITE, hov ? 0.12f : 0.055f));
+    Stroke(x, y, TRAY_W, TRAY_H, 22.f, O( hov ? 0.12f : 0.055f));
 
     if (g_hasBatt) {
         BatteryIcon(x + 18.f, y + 20.f, 26.f, 13.f, (float)g_battPct / 100.f);
@@ -2092,8 +2222,8 @@ static void DrawTray() {
 static void DrawNotifRow(float x, float y, float w, int idx, float a) {
     const Notif& n = g_notifs[idx];
     bool hov = (g_hover == H_NOTIF + idx);
-    Fill(x, y, w, 74.f, 14.f, C(WHITE, hov ? 0.055f : 0.028f));
-    Disc(x + 26.f, y + 26.f, 14.f, C(WHITE, 0.06f));
+    Fill(x, y, w, 74.f, 14.f, O( hov ? 0.055f : 0.028f));
+    Disc(x + 26.f, y + 26.f, 14.f, O( 0.06f));
     Glyph(n.glyph, x + 26.f, y + 26.f, 11.f, n.read ? COL_T35 : COL_T80);
     Txt(n.app, x + 48.f, y + 10.f, w - 96.f, 18.f, F_UI, 10.f, 600, COL_T35, 0, 1.f);
     Txt(n.when, x + w - 56.f, y + 10.f, 44.f, 18.f, F_UI, 10.f, 400, COL_T35, 2, 1.f);
@@ -2122,17 +2252,17 @@ static void DrawSystemBubble(float a) {
 
     Shadow(x, y, w, h, 28.f, 0.07f, 9);
     Fill(x, y, w, h, 28.f, C(COL_SURF, 0.965f));
-    Stroke(x, y, w, h, 28.f, C(WHITE, 0.07f));
+    Stroke(x, y, w, h, 28.f, O( 0.07f));
 
     // ---- header
     std::wstring topDate = g_rainmeterDate ? (DayUpper() + L",  " + RainmeterDateUpper()) : DateLong();
     Txt(topDate, x + 26.f, y + 18.f, w - 120.f, 22.f, F_SEMI, 11.5f, 600, COL_T70, 0, 1.f);
     Txt(TimeHM(), x + 24.f, y + 38.f, 240.f, 54.f, F_ANURATI, 34.f, 400, COL_T100, 0, 1.f);
-    Disc(x + w - 62.f, y + 40.f, 17.f, C(WHITE, 0.05f));
+    Disc(x + w - 62.f, y + 40.f, 17.f, O( 0.05f));
     Glyph(g_weatherGlyph, x + w - 62.f, y + 40.f, 15.f, COL_T90);
     Txt(g_weatherTempStr.c_str(), x + w - 132.f, y + 26.f, 44.f, 26.f, F_SEMI, 14.f, 600, COL_T90, 2, 1.f);
     Txt(g_weatherCity.c_str(), x + w - 170.f, y + 48.f, 104.f, 18.f, F_UI, 10.f, 400, COL_T35, 2, 1.f);
-    Line(x + 24.f, y + 100.f, x + w - 24.f, y + 100.f, C(WHITE, 0.06f));
+    Line(x + 24.f, y + 100.f, x + w - 24.f, y + 100.f, O( 0.06f));
 
     // ---- toggles
     const float pad = 24.f, gap = 14.f;
@@ -2176,7 +2306,7 @@ static void DrawSystemBubble(float a) {
 
     // ---- footer
     float fy = y + h - 44.f;
-    Line(x + 24.f, fy - 18.f, x + w - 24.f, fy - 18.f, C(WHITE, 0.06f));
+    Line(x + 24.f, fy - 18.f, x + w - 24.f, fy - 18.f, O( 0.06f));
     RingButton(x + pad + 14.f, fy, 17.f, H_LOCK, (wchar_t)0xE72E, 12.f);
     RingButton(x + pad + 62.f, fy, 17.f, H_SETTINGS, (wchar_t)0xE713, 12.f);
     RingButton(x + w - pad - 14.f, fy, 17.f, H_POWER, (wchar_t)0xE7E8, 12.f);
@@ -2235,12 +2365,12 @@ static void DrawLauncher(float a) {
 
     Shadow(x, y, LW, LH, 32.f, 0.075f, 10);
     Fill(x, y, LW, LH, 32.f, C(COL_SURF, 0.975f));
-    Stroke(x, y, LW, LH, 32.f, C(WHITE, 0.07f));
+    Stroke(x, y, LW, LH, 32.f, O( 0.07f));
 
     // ---- search field
     float sx = x + 56.f, sy = y + 44.f, sw = 620.f, sh = 56.f;
     Fill(sx, sy, sw, sh, 18.f, C(COL_SEC, 0.55f));
-    Stroke(sx, sy, sw, sh, 18.f, C(WHITE, 0.09f));
+    Stroke(sx, sy, sw, sh, 18.f, O( 0.09f));
     Glyph((wchar_t)0xE721, sx + 26.f, sy + sh * 0.5f, 12.f, COL_T50);
     if (g_query.empty()) {
         Txt(L"Search apps and settings", sx + 50.f, sy + 6.f, sw - 80.f, sh - 12.f, F_UI, 14.f, 400,
@@ -2269,7 +2399,7 @@ static void DrawLauncher(float a) {
         float tx = gx + (float)(k % LCOLS) * (tileW + gap);
         float ty = gy + (float)(k / LCOLS) * (tileH + gap);
         bool hov = (g_hover == H_APP + vi) || (g_launchSel == vi);
-        if (hov) Fill(tx, ty, tileW, tileH, 18.f, C(WHITE, 0.07f));
+        if (hov) Fill(tx, ty, tileW, tileH, 18.f, O( 0.07f));
         AppIcon(g_view[vi], tx + tileW * 0.5f, ty + 56.f, 76.f, 30.f, false);
         Txt(app.name, tx + 6.f, ty + 104.f, tileW - 12.f, 34.f, F_UI, 12.f, 500,
             hov ? COL_T100 : COL_T70, 1, 1.f);
@@ -2289,7 +2419,7 @@ static void DrawLauncher(float a) {
     for (int p = 0; p < pages; ++p) {
         float cx = x + LW * 0.5f - total * 0.5f + 9.f + (float)p * 18.f;
         bool on = (p == g_launchPage);
-        Disc(cx, dotY, on ? 4.5f : 3.2f, on ? C(COL_T90, 0.95f) : C(WHITE, 0.20f));
+        Disc(cx, dotY, on ? 4.5f : 3.2f, on ? C(COL_T90, 0.95f) : O( 0.20f));
         AddHit(cx - 9.f, dotY - 10.f, 18.f, 20.f, H_PAGE + p);
     }
     if (pages > 1) {
@@ -2334,20 +2464,20 @@ static void DrawContextMenu(float a) {
     }
 
     Shadow(x, y, w, h, 14.f, 0.08f, 6);
-    Fill(x, y, w, h, 14.f, C(0x16171A, 0.985f));
-    Stroke(x, y, w, h, 14.f, C(WHITE, 0.09f));
+    Fill(x, y, w, h, 14.f, C(COL_SURF, 0.985f));
+    Stroke(x, y, w, h, 14.f, O( 0.09f));
 
     for (int i = 0; i < CTX_N; ++i) {
         float ry = y + pad + rowH * (float)i + (i >= 4 ? 8.f : 0.f);
         bool hov = (g_ctxHover == i);
-        if (hov) Fill(x + 6.f, ry, w - 12.f, rowH, 9.f, C(WHITE, 0.07f));
+        if (hov) Fill(x + 6.f, ry, w - 12.f, rowH, 9.f, O( 0.07f));
         Glyph(CTX[i].glyph, x + 26.f, ry + rowH * 0.5f, 10.f, hov ? COL_T90 : COL_T50);
         Txt(CTX[i].label, x + 46.f, ry + 4.f, w - 130.f, rowH - 8.f, F_UI, 12.f, 500,
             hov ? COL_T100 : COL_T80, 0, 1.f);
         if (CTX[i].key[0]) Txt(CTX[i].key, x + w - 92.f, ry + 4.f, 76.f, rowH - 8.f, F_MONO, 9.5f,
                                400, COL_T35, 2, 1.f);
         AddHit(x + 6.f, ry, w - 12.f, rowH, H_CTX + i);
-        if (i == 4) Line(x + 14.f, ry + rowH + 4.f, x + w - 14.f, ry + rowH + 4.f, C(WHITE, 0.06f));
+        if (i == 4) Line(x + 14.f, ry + rowH + 4.f, x + w - 14.f, ry + rowH + 4.f, O( 0.06f));
     }
 
     if (layer) { g_rt->PopLayer(); layer->Release(); }
@@ -2370,9 +2500,9 @@ static void DrawToasts() {
         float y = baseY - h - (float)shown * (h + 10.f);
         float slide = (1.f - EaseOut(in)) * 24.f;
         Shadow(x, y + slide, w, h, 16.f, 0.06f * a, 5);
-        Fill(x, y + slide, w, h, 16.f, C(0x16171A, 0.97f * a));
-        Stroke(x, y + slide, w, h, 16.f, C(WHITE, 0.08f * a));
-        Disc(x + 34.f, y + slide + h * 0.5f, 16.f, C(WHITE, 0.06f * a));
+        Fill(x, y + slide, w, h, 16.f, C(COL_SURF, 0.97f * a));
+        Stroke(x, y + slide, w, h, 16.f, O( 0.08f * a));
+        Disc(x + 34.f, y + slide + h * 0.5f, 16.f, O( 0.06f * a));
         Glyph(t.glyph, x + 34.f, y + slide + h * 0.5f, 12.f, COL_T90, a);
         Txt(t.text, x + 60.f, y + slide + 10.f, w - 84.f, h - 20.f, F_UI, 12.f, 500, COL_T90, 0, a);
     }
@@ -2383,7 +2513,7 @@ static void DrawToasts() {
 // ----------------------------------------------------------------------------
 static void DrawLockScreen(float a) {
     float e = EaseOut(a);
-    Fill(0.f, 0.f, DW, DH, 0.f, C(0x05060A, 0.86f * e));
+    Fill(0.f, 0.f, DW, DH, 0.f, C(COL_LETTER, 0.86f * e));
     if (g_glow) {
         g_glow->SetOpacity(0.35f * e);
         g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_glow);
@@ -2400,19 +2530,19 @@ static void DrawLockScreen(float a) {
         Txt(DateLong(), 0.f, cy + 128.f, DW, 36.f, F_UI, 18.f, 400, COL_T70, 1, e);
     }
 
-    Disc(DW * 0.5f, cy + 246.f, 44.f, C(WHITE, 0.07f * e));
-    Ring(DW * 0.5f, cy + 246.f, 44.f, C(WHITE, 0.14f * e), 1.f);
+    Disc(DW * 0.5f, cy + 246.f, 44.f, O( 0.07f * e));
+    Ring(DW * 0.5f, cy + 246.f, 44.f, O( 0.14f * e), 1.f);
     Glyph((wchar_t)0xE77B, DW * 0.5f, cy + 246.f, 30.f, COL_T80, e);
     Txt(L"Buffy", DW * 0.5f - 100.f, cy + 300.f, 200.f, 28.f, F_UI, 13.f, 600, COL_T90, 1, e);
 
     float py = cy + 366.f;
-    Fill(DW * 0.5f - 110.f, py, 220.f, 46.f, 23.f, C(WHITE, 0.07f * e));
-    Stroke(DW * 0.5f - 110.f, py, 220.f, 46.f, 23.f, C(WHITE, 0.13f * e));
+    Fill(DW * 0.5f - 110.f, py, 220.f, 46.f, 23.f, O( 0.07f * e));
+    Stroke(DW * 0.5f - 110.f, py, 220.f, 46.f, 23.f, O( 0.13f * e));
     Txt(L"Press Enter to unlock", DW * 0.5f - 105.f, py + 6.f, 210.f, 34.f, F_UI, 12.f, 500,
         COL_T70, 1, e);
 
     for (int i = 0; i < 4; ++i)
-        Disc(DW * 0.5f - 27.f + i * 18.f, py + 72.f, 3.f, C(WHITE, 0.18f * e));
+        Disc(DW * 0.5f - 27.f + i * 18.f, py + 72.f, 3.f, O( 0.18f * e));
 
     AddHit(0.f, 0.f, DW, DH, H_UNLOCK);
 }
@@ -2426,9 +2556,9 @@ static const wchar_t  WIN_GLYPH[APP_COUNT] = { (wchar_t)0xE8B7, (wchar_t)0xE756,
                                                (wchar_t)0xE70F, (wchar_t)0xE946 };
 
 static void Switch(float x, float y, float w, float h, bool on) {
-    Fill(x, y, w, h, h * 0.5f, on ? C(COL_ACC, 0.92f) : C(WHITE, 0.16f));
+    Fill(x, y, w, h, h * 0.5f, on ? C(COL_ACC, 0.92f) : O( 0.16f));
     float kx = on ? (x + w - h * 0.5f) : (x + h * 0.5f);
-    Disc(kx, y + h * 0.5f, h * 0.5f - 3.f, on ? C(0x0B0B0D, 0.95f) : C(COL_T90, 0.95f));
+    Disc(kx, y + h * 0.5f, h * 0.5f - 3.f, on ? C(g_onActive, 0.95f) : C(COL_T90, 0.95f));
 }
 
 // ---- Files -----------------------------------------------------------------
@@ -2439,7 +2569,7 @@ static void FilesContent(float x, float y, float w, float h, Win& win) {
     Txt(L"Home", x + 20.f, y + 12.f, 60.f, 22.f, F_UI, 11.5f, 500, COL_T35, 0, 1.f);
     Txt(L"/", x + 66.f, y + 12.f, 16.f, 22.f, F_UI, 11.5f, 400, COL_T35, 0, 1.f);
     Txt(L"Projects", x + 82.f, y + 12.f, 200.f, 22.f, F_UI, 11.5f, 500, COL_T70, 0, 1.f);
-    Line(x + 16.f, y + 40.f, x + w - 16.f, y + 40.f, C(WHITE, 0.055f));
+    Line(x + 16.f, y + 40.f, x + w - 16.f, y + 40.f, O( 0.055f));
 
     g_rt->PushAxisAlignedClip(R(x, y + 42.f, w, h - 42.f), D2D1_ANTIALIAS_MODE_ALIASED);
     float ry = y + 48.f - win.scroll;
@@ -2447,8 +2577,8 @@ static void FilesContent(float x, float y, float w, float h, Win& win) {
         if (ry > y + h + 20.f) break;
         bool hov = (g_fileHover == i);
         if (ry + 44.f > y + 40.f) {
-            if (hov) Fill(x + 12.f, ry, w - 24.f, 44.f, 10.f, C(WHITE, 0.05f));
-            Disc(x + 38.f, ry + 22.f, 15.f, C(WHITE, 0.05f));
+            if (hov) Fill(x + 12.f, ry, w - 24.f, 44.f, 10.f, O( 0.05f));
+            Disc(x + 38.f, ry + 22.f, 15.f, O( 0.05f));
             Glyph(FILES[i].glyph, x + 38.f, ry + 22.f, 11.f, FILES[i].folder ? COL_T90 : COL_T50);
             Txt(FILES[i].name, x + 62.f, ry + 6.f, w - 260.f, 22.f, F_UI, 12.f, 500, COL_T80, 0, 1.f);
             Txt(FILES[i].when, x + w - 210.f, ry + 6.f, 130.f, 22.f, F_UI, 11.f, 400, COL_T35, 2, 1.f);
@@ -2538,30 +2668,87 @@ static void WallpaperSwatch(float x, float y, float w, float h, int idx, bool se
     Fill(x + 1.f, y + 1.f, w - 2.f, h * 0.44f, 11.f, C(p.a, 0.92f));
     Fill(x + 1.f, y + h * 0.60f, w - 2.f, h * 0.39f, 11.f, C(p.c, 0.92f));
     Disc(x + w - 30.f, y + 22.f, 30.f, C(p.glow, 0.30f));
-    Stroke(x, y, w, h, 12.f, C(WHITE, sel ? 0.62f : (hov ? 0.18f : 0.08f)), sel ? 1.6f : 1.f);
+    Stroke(x, y, w, h, 12.f, O( sel ? 0.62f : (hov ? 0.18f : 0.08f)), sel ? 1.6f : 1.f);
     Txt(p.name, x + 10.f, y + h - 26.f, w - 20.f, 18.f, F_UI, 10.5f, 500,
         sel ? COL_T100 : COL_T70, 0, 1.f);
     if (sel) {
         Disc(x + 17.f, y + 17.f, 8.f, C(COL_ACC, 0.95f));
-        Glyph((wchar_t)0xE73E, x + 17.f, y + 17.f, 6.f, 0x0B0B0D);
+        Glyph((wchar_t)0xE73E, x + 17.f, y + 17.f, 6.f, g_onActive);
     }
     AddHit(x, y, w, h, H_SET_WP + idx);
 }
 
 static void SegButton(float x, float y, float w, float h, const wchar_t* label, bool on, bool hov, int id) {
-    Fill(x, y, w, h, 10.f, on ? C(COL_T100, 0.95f) : C(WHITE, hov ? 0.08f : 0.04f));
-    if (!on) Stroke(x, y, w, h, 10.f, C(WHITE, 0.09f));
+    Fill(x, y, w, h, 10.f, on ? C(COL_ACTIVE, 0.95f) : O( hov ? 0.08f : 0.04f));
+    if (!on) Stroke(x, y, w, h, 10.f, O( 0.09f));
     Txt(label, x, y + (h - 16.f) * 0.5f, w, 16.f, F_UI, 11.f, 600,
-        on ? 0x101012 : COL_T80, 1, 1.f);
+        on ? g_onActive : COL_T80, 1, 1.f);
     AddHit(x, y, w, h, id);
 }
 
 static void SettingsRow(float x, float y, float w, const wchar_t* label, bool on, int id, bool hov) {
-    if (hov) Fill(x, y, w, 34.f, 9.f, C(WHITE, 0.045f));
+    if (hov) Fill(x, y, w, 34.f, 9.f, O( 0.045f));
     Txt(label, x + 10.f, y + 7.f, w - 74.f, 20.f, F_UI, 11.5f, 500,
         on ? COL_T90 : COL_T50, 0, 1.f);
     Switch(x + w - 52.f, y + 7.f, 40.f, 20.f, on);
     AddHit(x, y, w, 34.f, id);
+}
+
+// A tiny schematic of a layout — rows of proportional cells with the stagger
+// offsets kept — used by the layout picker in Settings > Appearance.
+static void LayoutThumb(float x, float y, float w, float h, int lay, bool sel, bool hov) {
+    int n = 0;
+    const shelllayout::LayoutDef* L = shelllayout::LayoutTable(n);
+    if (lay < 0 || lay >= n) return;
+    const shelllayout::LayoutDef& d = L[lay];
+
+    Fill(x, y, w, h, 9.f, C(sel ? COL_SEC : COL_TILE, 0.96f));
+    Stroke(x, y, w, h, 9.f, O( sel ? 0.45f : (hov ? 0.22f : 0.10f)), sel ? 1.5f : 1.f);
+
+    float maxW = 0.f, totalH = 0.f;
+    for (int r = 0; r < d.n; ++r) {
+        float rowW = 0.f, rowH = 0.f;
+        for (int c = 0; c < d.rows[r].n; ++c) {
+            const shelllayout::Cell& cell = d.rows[r].cells[c];
+            float ch = -d.rowGap;
+            for (int k = 0; k < cell.n; ++k) ch += shelllayout::SpecH(cell.ids[k]) + d.rowGap;
+            if (ch < 0.f) ch = 0.f;
+            if (ch + cell.dy > rowH) rowH = ch + cell.dy;
+            rowW += cell.w + (c ? d.colGap : 0.f);
+        }
+        if (rowW > maxW) maxW = rowW;
+        totalH += rowH + (r + 1 < d.n ? d.rowGap : 0.f);
+    }
+    if (maxW <= 0.f || totalH <= 0.f) return;
+
+    // One shared world scale for every thumb (design width, or the 1000px
+    // widget band, whichever is tighter) so a wide layout really looks wider.
+    const float s = std::min((w - 12.f) / shelllayout::kDesignW, (h - 12.f) / 1000.f);
+    float oy = y + (h - totalH * s) * 0.5f;
+    for (int r = 0; r < d.n; ++r) {
+        float rowH = 0.f;
+        for (int c = 0; c < d.rows[r].n; ++c) {
+            const shelllayout::Cell& cell = d.rows[r].cells[c];
+            float ch = -d.rowGap;
+            for (int k = 0; k < cell.n; ++k) ch += shelllayout::SpecH(cell.ids[k]) + d.rowGap;
+            if (ch < 0.f) ch = 0.f;
+            if (ch + cell.dy > rowH) rowH = ch + cell.dy;
+        }
+        float ox = x + (w - maxW * s) * 0.5f;
+        for (int c = 0; c < d.rows[r].n; ++c) {
+            const shelllayout::Cell& cell = d.rows[r].cells[c];
+            float ch = -d.rowGap;
+            for (int k = 0; k < cell.n; ++k) ch += shelllayout::SpecH(cell.ids[k]) + d.rowGap;
+            if (ch < 0.f) ch = 0.f;
+            Fill(ox, oy + cell.dy * s, cell.w * s, ch * s, 2.f,
+                 C(sel ? COL_ACC : COL_T50, sel ? 0.85f : 0.55f));
+            ox += (cell.w + d.colGap) * s;
+        }
+        oy += (rowH + d.rowGap) * s;
+    }
+    Txt(d.name, x, y + h + 3.f, w, 16.f, F_UI, 9.5f, sel ? 600 : 500,
+        sel ? COL_T100 : COL_T50, 1, 1.f);
+    AddHit(x, y, w, h + 18.f, H_SET_LAYOUT + lay);
 }
 
 static void ResetAppearance() {
@@ -2575,6 +2762,7 @@ static void ResetAppearance() {
     g_motion = true;
     g_rainmeterDate = true;
     g_wpDim = 0.32f;
+    ApplyLayout(0, true);
     g_tog[TOG_LIVE_WP] = true;
     g_togSub[TOG_LIVE_WP] = L"Particles & motion on";
     if (g_wp == 0) { SafeRelease(g_wpA); BuildWallpaperBrushes(); }
@@ -2585,14 +2773,14 @@ static void ResetAppearance() {
 
 static void SettingsContent(float x, float y, float w, float h) {
     const float navW = 176.f;
-    Line(x + navW, y + 16.f, x + navW, y + h - 16.f, C(WHITE, 0.055f));
+    Line(x + navW, y + 16.f, x + navW, y + h - 16.f, O( 0.055f));
     Txt(L"Settings", x + 24.f, y + 20.f, navW - 44.f, 30.f, F_SEMI, 16.f, 600, COL_T100, 0, 1.f);
 
     for (int i = 0; i < 3; ++i) {
         float ry = y + 66.f + (float)i * 42.f;
         bool on = (g_setPage == i);
         bool hov = (g_hover == H_SET_NAV + i);
-        if (on || hov) Fill(x + 12.f, ry, navW - 24.f, 34.f, 9.f, C(WHITE, on ? 0.09f : 0.04f));
+        if (on || hov) Fill(x + 12.f, ry, navW - 24.f, 34.f, 9.f, O( on ? 0.09f : 0.04f));
         if (on) Fill(x + 12.f, ry, 3.f, 34.f, 1.5f, C(COL_ACTIVE, 0.9f));
         Txt(SET_PAGES[i], x + 26.f, ry + 7.f, navW - 60.f, 20.f, F_UI, 11.5f,
             on ? 600 : 500, on ? COL_T100 : COL_T70, 0, 1.f);
@@ -2617,8 +2805,8 @@ static void SettingsContent(float x, float y, float w, float h) {
             int t = rows[i];
             bool on = g_tog[t];
             bool hov = (g_hover == H_TOG0 + t);
-            if (hov) Fill(cx - 8.f, ty, cw + 16.f, 52.f, 10.f, C(WHITE, 0.04f));
-            Disc(cx + 18.f, ty + 26.f, 15.f, C(WHITE, 0.055f));
+            if (hov) Fill(cx - 8.f, ty, cw + 16.f, 52.f, 10.f, O( 0.04f));
+            Disc(cx + 18.f, ty + 26.f, 15.f, O( 0.055f));
             Glyph(TOG_GLYPH[t], cx + 18.f, ty + 26.f, 11.f, on ? COL_T90 : COL_T50);
             Txt(TOG_NAME[t], cx + 44.f, ty + 8.f, cw - 120.f, 22.f, F_UI, 12.f, 500, COL_T80, 0, 1.f);
             Txt(g_togSub[t].c_str(), cx + 44.f, ty + 27.f, cw - 120.f, 20.f, F_UI, 10.5f, 400, COL_T35, 0, 1.f);
@@ -2626,7 +2814,7 @@ static void SettingsContent(float x, float y, float w, float h) {
             AddHit(cx - 8.f, ty, cw + 16.f, 52.f, H_TOG0 + t);
             ty += 52.f;
         }
-        Line(cx - 4.f, ty + 8.f, cx + cw + 4.f, ty + 8.f, C(WHITE, 0.055f));
+        Line(cx - 4.f, ty + 8.f, cx + cw + 4.f, ty + 8.f, O( 0.055f));
         Txt(L"Volume", cx, ty + 22.f, 90.f, 22.f, F_UI, 11.5f, 500, COL_T50, 0, 1.f);
         SliderDraw(cx + 80.f, ty + 16.f, cw - 142.f, g_vol, H_VOL, 7.f);
         Txt(std::to_wstring((int)std::lround(g_vol * 100.f)) + L"%", cx + cw - 48.f, ty + 20.f, 48.f, 20.f, F_UI, 11.f, 400, COL_T50, 2, 1.f);
@@ -2652,8 +2840,8 @@ static void SettingsContent(float x, float y, float w, float h) {
         }
         float customBtnY = ry + 24.f + 4.f * 60.f + 6.f;
         bool hovCustom = (g_hover == H_SET_CUSTOM_WP);
-        Fill(lx, customBtnY, half, 32.f, 9.f, C(WHITE, hovCustom ? 0.10f : 0.05f));
-        Stroke(lx, customBtnY, half, 32.f, 9.f, C(WHITE, hovCustom ? 0.22f : 0.12f));
+        Fill(lx, customBtnY, half, 32.f, 9.f, O( hovCustom ? 0.10f : 0.05f));
+        Stroke(lx, customBtnY, half, 32.f, 9.f, O( hovCustom ? 0.22f : 0.12f));
         Glyph((wchar_t)0xE8B9, lx + 20.f, customBtnY + 16.f, 12.f, COL_T90);
         Txt(L"Browse Image or MP4 Video...", lx + 38.f, customBtnY + 7.f, half - 48.f, 18.f, F_UI, 11.f, 500, COL_T90, 0, 1.f);
         AddHit(lx, customBtnY, half, 32.f, H_SET_CUSTOM_WP);
@@ -2687,14 +2875,28 @@ static void SettingsContent(float x, float y, float w, float h) {
         SliderDraw(lx, ly + 22.f, half - 52.f, g_wpDim / 0.85f, H_WPDIM, 7.f);
         Txt(std::to_wstring((int)std::lround(g_wpDim / 0.85f * 100.f)) + L"%", lx + half - 48.f, ly + 26.f, 48.f, 20.f, F_UI, 11.f, 400, COL_T50, 2, 1.f);
 
-        Txt(L"DESKTOP WIDGETS", rx, ry, half, 18.f, F_UI, 10.f, 600, COL_T35, 0, 1.f);
-        Txt(L"Shown", rx + half - 60.f, ry, 60.f, 18.f, F_UI, 10.f, 400, COL_T35, 2, 1.f);
+        Txt(L"DESKTOP LAYOUT", rx, ry, half - 130.f, 18.f, F_UI, 10.f, 600, COL_T35, 0, 1.f);
+        Txt(THEMES[g_layout].name, rx + half - 130.f, ry, 130.f, 18.f, F_UI, 10.f, 600, COL_ACC, 2, 1.f);
+        {
+            int nLay = 0;
+            const shelllayout::LayoutDef* lays = shelllayout::LayoutTable(nLay);
+            const float tw = (half - 3.f * 8.f) / 4.f, th = 46.f;
+            for (int i = 0; i < nLay; ++i) {
+                float px = rx + (float)(i % 4) * (tw + 8.f);
+                float py = ry + 22.f + (float)(i / 4) * (th + 26.f);
+                LayoutThumb(px, py, tw, th, i, i == g_layout, g_hover == H_SET_LAYOUT + i);
+            }
+        }
+
+        const float wy = ry + 176.f;
+        Txt(L"DESKTOP WIDGETS", rx, wy, half, 18.f, F_UI, 10.f, 600, COL_T35, 0, 1.f);
+        Txt(L"Shown", rx + half - 60.f, wy, 60.f, 18.f, F_UI, 10.f, 400, COL_T35, 2, 1.f);
         for (int i = 0; i < shelllayout::W_COUNT; ++i) {
-            SettingsRow(rx, ry + 24.f + (float)i * 36.f, half, WIDGET_NAME[i], g_widgetOn[i],
+            SettingsRow(rx, wy + 24.f + (float)i * 36.f, half, WIDGET_NAME[i], g_widgetOn[i],
                         H_SET_WIDGET + i, g_hover == H_SET_WIDGET + i);
         }
-        Txt(L"Widgets flow into three columns; hidden ones close the gap.", rx, ry + 24.f + 8.f * 36.f,
-            half, 34.f, F_UI, 10.f, 400, COL_T35, 0, 0.9f);
+        Txt(L"Widgets flow into the selected layout; hidden ones close the gap.",
+            rx, wy + 24.f + 8.f * 36.f, half, 34.f, F_UI, 10.f, 400, COL_T35, 0, 0.9f);
     } else {
         // ---- Advanced -----------------------------------------------------
         Txt(L"Advanced", cx, ry, cw, 30.f, F_SEMI, 17.f, 600, COL_T100, 0, 1.f);
@@ -2713,8 +2915,8 @@ static void SettingsContent(float x, float y, float w, float h) {
             F_UI, 11.f, 400, COL_T50, 0, 1.f);
 
         bool hov = (g_hover == H_SET_RESET);
-        Fill(cx, ry + 232.f, 268.f, 38.f, 11.f, C(WHITE, hov ? 0.10f : 0.05f));
-        Stroke(cx, ry + 232.f, 268.f, 38.f, 11.f, C(WHITE, hov ? 0.20f : 0.10f));
+        Fill(cx, ry + 232.f, 268.f, 38.f, 11.f, O( hov ? 0.10f : 0.05f));
+        Stroke(cx, ry + 232.f, 268.f, 38.f, 11.f, O( hov ? 0.20f : 0.10f));
         Glyph((wchar_t)0xE72C, cx + 24.f, ry + 251.f, 11.f, COL_T80);
         Txt(L"Reset appearance to defaults", cx + 44.f, ry + 242.f, 210.f, 20.f, F_UI, 11.5f, 500,
             COL_T80, 0, 1.f);
@@ -2745,8 +2947,8 @@ static void EditorContent(float x, float y, float w, float h, Win& win) {
 // ---- About -----------------------------------------------------------------
 static void AboutContent(float x, float y, float w, float h) {
     g_rt->PushAxisAlignedClip(R(x, y, w, h), D2D1_ANTIALIAS_MODE_ALIASED);
-    Disc(x + 74.f, y + 78.f, 36.f, C(WHITE, 0.05f));
-    Ring(x + 74.f, y + 78.f, 36.f, C(WHITE, 0.10f));
+    Disc(x + 74.f, y + 78.f, 36.f, O( 0.05f));
+    Ring(x + 74.f, y + 78.f, 36.f, O( 0.10f));
     Glyph((wchar_t)0xE790, x + 74.f, y + 78.f, 26.f, COL_T90);
 
     Txt(L"Obsidian Shell", x + 130.f, y + 50.f, w - 170.f, 40.f, F_SEMI, 24.f, 600, COL_T100, 0, 1.f);
@@ -2758,6 +2960,7 @@ static void AboutContent(float x, float y, float w, float h) {
     float ry = y + 156.f;
     static const wchar_t* bullets[] = {
         L"Six wallpapers, picker in Settings \u203A Appearance",
+        L"Seven desktop layouts, each with its own theme & wallpaper",
         L"Eight desktop widgets, three sizes, per-widget visibility",
         L"Shelf, launcher, unified system bubble, window manager",
         L"12/24-hour clock, reduce-motion, toasts, lock screen",
@@ -2770,12 +2973,12 @@ static void AboutContent(float x, float y, float w, float h) {
     }
 
     // palette chip strip
-    unsigned chips[6] = { COL_ACC, COL_ACTIVE, COL_SEC, COL_TILE, COL_SURF, 0x090A0D };
+    unsigned chips[6] = { COL_ACC, COL_ACTIVE, COL_SEC, COL_TILE, COL_SURF, COL_LETTER };
     Txt(L"Palette", x + 30.f, ry + 12.f, 100.f, 20.f, F_UI, 10.f, 600, COL_T35, 0, 1.f);
     for (int i = 0; i < 6; ++i) {
         float cx = x + 100.f + (float)i * 30.f;
         Fill(cx, ry + 10.f, 22.f, 22.f, 6.f, C(chips[i], 0.98f));
-        Stroke(cx, ry + 10.f, 22.f, 22.f, 6.f, C(WHITE, 0.10f));
+        Stroke(cx, ry + 10.f, 22.f, 22.f, 6.f, O( 0.10f));
     }
     Txt(L"Built for Windows 10 / 11  ·  x64", x + 28.f, y + h - 40.f, w - 56.f, 22.f,
         F_UI, 10.5f, 400, COL_T35, 0, 0.9f);
@@ -2788,15 +2991,15 @@ static void AboutContent(float x, float y, float w, float h) {
 static void DrawWindowChrome(int kind, float x, float y, float w, float h, bool focused) {
     Shadow(x, y, w, h, 20.f, focused ? 0.075f : 0.05f, 8);
     Fill(x, y, w, h, 20.f, C(COL_SURF, focused ? 0.985f : 0.93f));
-    Stroke(x, y, w, h, 20.f, C(WHITE, focused ? 0.11f : 0.05f));
+    Stroke(x, y, w, h, 20.f, O( focused ? 0.11f : 0.05f));
 
     // Registered first so that every later region takes priority over the body.
     AddHit(x, y, w, h, H_WIN + kind * 8 + WP_BODY);
     AddHit(x, y, w, TITLE_H, H_WIN + kind * 8 + WP_TITLE);
 
     // title bar
-    Fill(x + 1.f, y + 1.f, w - 2.f, TITLE_H, 19.f, C(WHITE, focused ? 0.035f : 0.02f));
-    Line(x + 1.f, y + TITLE_H + 1.f, x + w - 1.f, y + TITLE_H + 1.f, C(WHITE, 0.07f));
+    Fill(x + 1.f, y + 1.f, w - 2.f, TITLE_H, 19.f, O( focused ? 0.035f : 0.02f));
+    Line(x + 1.f, y + TITLE_H + 1.f, x + w - 1.f, y + TITLE_H + 1.f, O( 0.07f));
     Glyph(WIN_GLYPH[kind], x + 24.f, y + TITLE_H * 0.5f + 1.f, 11.f, focused ? COL_T90 : COL_T50);
     Txt(WIN_TITLE[kind], x + 42.f, y + 8.f, w - 170.f, TITLE_H - 14.f, F_UI, 12.f, 600,
         focused ? COL_T90 : COL_T50, 0, 1.f);
@@ -2808,7 +3011,7 @@ static void DrawWindowChrome(int kind, float x, float y, float w, float h, bool 
     for (int i = 0; i < 3; ++i) {
         int id = H_WIN + kind * 8 + btns[i].part;
         bool hov = (g_hover == id);
-        if (hov) Disc(bx, y + TITLE_H * 0.5f + 1.f, 13.f, C(WHITE, 0.10f));
+        if (hov) Disc(bx, y + TITLE_H * 0.5f + 1.f, 13.f, O( 0.10f));
         Glyph(btns[i].glyph, bx, y + TITLE_H * 0.5f + 1.f, 8.5f, hov ? COL_T100 : COL_T70);
         AddHit(bx - 15.f, y + 8.f, 30.f, 30.f, id);
         bx -= 34.f;
@@ -2841,7 +3044,7 @@ static void DrawWindow(int kind) {
     g_rt->PopAxisAlignedClip();
 
     if (win.maxed) {
-        Line(x + 20.f, y + h - 1.5f, x + w - 20.f, y + h - 1.5f, C(WHITE, 0.10f));
+        Line(x + 20.f, y + h - 1.5f, x + w - 20.f, y + h - 1.5f, O( 0.10f));
     }
 }
 
@@ -2856,8 +3059,8 @@ static void DrawSnapHint() {
     else if (x + w > DW - 12.f) { hint = R(DW * 0.5f + 10.f, 20.f, DW * 0.5f - 30.f, DH - 130.f); show = true; }
     else if (y < 12.f) { hint = R(20.f, 20.f, DW - 40.f, DH - 130.f); show = true; }
     if (!show) return;
-    Fill(hint.left, hint.top, hint.right - hint.left, hint.bottom - hint.top, 20.f, C(WHITE, 0.045f));
-    Stroke(hint.left, hint.top, hint.right - hint.left, hint.bottom - hint.top, 20.f, C(WHITE, 0.14f));
+    Fill(hint.left, hint.top, hint.right - hint.left, hint.bottom - hint.top, 20.f, O( 0.045f));
+    Stroke(hint.left, hint.top, hint.right - hint.left, hint.bottom - hint.top, 20.f, O( 0.14f));
 }
 // ============================================================================
 //  Section 6 — shell actions, render loop, input routing, WinMain
@@ -3674,8 +3877,8 @@ static void DrawHomeApps() {
 
     // Fixed Top Header: "<- Desktop" Back Pill Button (Side Scroll) + Page Title
     bool backHov = (g_hover == H_APP_BACK);
-    Fill(x0, 72.f, 132.f, 34.f, 17.f, C(WHITE, backHov ? 0.12f : 0.05f));
-    Stroke(x0, 72.f, 132.f, 34.f, 17.f, C(WHITE, backHov ? 0.30f : 0.12f), 1.f);
+    Fill(x0, 72.f, 132.f, 34.f, 17.f, O( backHov ? 0.12f : 0.05f));
+    Stroke(x0, 72.f, 132.f, 34.f, 17.f, O( backHov ? 0.30f : 0.12f), 1.f);
     Glyph((wchar_t)0xE72B, x0 + 20.f, 89.f, 11.f, backHov ? COL_T100 : COL_T80);
     Txt(L"Desktop", x0 + 40.f, 80.f, 80.f, 18.f, F_UI, 12.f, 500, backHov ? COL_T100 : COL_T80, 0, 1.f);
     AddHit(x0, 72.f, 132.f, 34.f, H_APP_BACK);
@@ -3692,7 +3895,7 @@ static void DrawHomeApps() {
         float cy = y0 + (float)(i / cols) * cellH - g_appScroll + 70.f;
         if (cy + 96.f < clipTop || cy - 96.f > clipTop + clipH) continue;
         bool hov = (g_hover == H_HAPP + i) && !g_pdrag && !g_appVDrag && !g_appScrollDrag;
-        if (hov) Fill(cx - 96.f, cy - 64.f, 192.f, 156.f, 20.f, C(WHITE, 0.055f));
+        if (hov) Fill(cx - 96.f, cy - 64.f, 192.f, 156.f, 20.f, O( 0.055f));
         AppIcon(i, cx, cy - 14.f, 84.f, 32.f, hov);
         Txt(APPS[i].name, cx - 96.f, cy + 42.f, 192.f, 24.f, F_UI, 12.5f, 500,
             hov ? COL_T100 : COL_T80, 1, 1.f);
@@ -3711,11 +3914,11 @@ static void DrawHomeApps() {
         bool thumbHov = (g_hover == H_APP_SCROLL_THUMB) || g_appScrollDrag;
 
         // Track
-        Fill(trackX - 2.f, trackY, 10.f, trackH, 5.f, C(WHITE, trackHov ? 0.08f : 0.04f));
+        Fill(trackX - 2.f, trackY, 10.f, trackH, 5.f, O( trackHov ? 0.08f : 0.04f));
         AddHit(trackX - 8.f, trackY, 22.f, trackH, H_APP_SCROLL_TRACK);
 
         // Thumb
-        Fill(trackX - 1.f, thumbY, 8.f, thumbH, 4.f, C(WHITE, thumbHov ? 0.45f : 0.28f));
+        Fill(trackX - 1.f, thumbY, 8.f, thumbH, 4.f, O( thumbHov ? 0.45f : 0.28f));
         AddHit(trackX - 10.f, thumbY, 26.f, thumbH, H_APP_SCROLL_THUMB);
     }
 }
@@ -3728,8 +3931,8 @@ static void DrawPageDots() {
     const float x0 = (DW - pillW) * 0.5f;
 
     // Capsule background
-    Fill(x0, cy - pillH * 0.5f, pillW, pillH, pillH * 0.5f, C(0x0E1118, 0.72f));
-    Stroke(x0, cy - pillH * 0.5f, pillW, pillH, pillH * 0.5f, C(WHITE, 0.12f), 1.f);
+    Fill(x0, cy - pillH * 0.5f, pillW, pillH, pillH * 0.5f, C(g_cardBase, 0.72f));
+    Stroke(x0, cy - pillH * 0.5f, pillW, pillH, pillH * 0.5f, O( 0.12f), 1.f);
 
     const wchar_t* labels[2] = { L"Desktop", L"All Apps" };
     const wchar_t icons[2] = { (wchar_t)0xE80F, (wchar_t)0xE71D };
@@ -3743,12 +3946,12 @@ static void DrawPageDots() {
         bool hov = (g_hover == H_HDOT + p);
 
         if (prox > 0.05f) {
-            Fill(sx, sy, segW, sh, sh * 0.5f, C(WHITE, 0.12f * prox));
+            Fill(sx, sy, segW, sh, sh * 0.5f, O( 0.12f * prox));
             if (prox > 0.65f) {
                 Stroke(sx, sy, segW, sh, sh * 0.5f, C(COL_ACTIVE, 0.60f * (prox - 0.65f) / 0.35f), 1.f);
             }
         } else if (hov) {
-            Fill(sx, sy, segW, sh, sh * 0.5f, C(WHITE, 0.05f));
+            Fill(sx, sy, segW, sh, sh * 0.5f, O( 0.05f));
         }
 
         Glyph(icons[p], sx + 20.f, cy, 10.5f, prox > 0.5f ? COL_T100 : (hov ? COL_T80 : COL_T50));
@@ -3989,6 +4192,16 @@ static void HandleClick(int id, float mx, float my) {
         g_rainmeterDate = !g_rainmeterDate;
         SaveSettings();
         ShowToast(g_rainmeterDate ? L"Rainmeter Date UI on" : L"Classic Date UI on", (wchar_t)0xE787);
+        return;
+    }
+    if (id >= H_SET_LAYOUT && id < H_SET_LAYOUT + shelllayout::LAY_COUNT) {
+        const int lay = id - H_SET_LAYOUT;
+        int n = 0;
+        const shelllayout::LayoutDef* L = shelllayout::LayoutTable(n);
+        ApplyLayout(lay, true);
+        SaveSettings();
+        ShowToast(std::wstring(L"Layout: ") + L[lay].name + L" \u00B7 " + THEMES[lay].name,
+                  (wchar_t)0xE80F);
         return;
     }
     if (id == H_SET_RESET) {
@@ -4777,11 +4990,14 @@ static_assert(H_PAGE + 20 <= H_SHELF, "page dots overlap the shelf");
 static_assert(H_SHELF + 40 <= H_WIN, "shelf ids overlap window ids");
 static_assert(H_WIN + APP_COUNT * 8 <= H_SET_NAV, "window ids overlap the settings tabs");
 static_assert(H_SET_NAV + 3 <= H_SET_WP, "settings tabs overlap the wallpaper swatches");
-static_assert(H_SET_WP + WP_COUNT <= H_SET_SIZE, "wallpaper swatches overlap the size buttons");
+static_assert(H_SET_WP + WP_COUNT <= H_UNLOCK, "wallpaper swatches overlap the unlock region");
 static_assert(H_SET_SIZE + 3 <= H_SET_WIDGET, "size buttons overlap the widget list");
 static_assert(H_SET_WIDGET + shelllayout::W_COUNT <= H_SET_MISC, "widget list overlaps preferences");
 static_assert(H_SET_MISC + 3 <= H_SET_RESET, "preferences overlap the reset button");
 static_assert(H_SET_RESET < H_CTX, "settings ids overlap the context menu");
+static_assert(H_CTX + 16 <= H_SET_LAYOUT, "context menu overlaps the layout picker");
+static_assert(H_SET_LAYOUT + shelllayout::LAY_COUNT <= H_SET_WP,
+              "layout picker overlaps the wallpaper swatches");
 static_assert(H_CTX + 16 <= H_UNLOCK, "context menu overlaps the unlock region");
 static_assert(H_UNLOCK < H_FILE, "unlock region overlaps file rows");
 static_assert(H_FILE + FILE_N + 4 <= H_DESK, "file rows overlap the desktop");

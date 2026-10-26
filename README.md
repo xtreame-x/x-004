@@ -6,6 +6,14 @@ A high-performance, hardware-accelerated desktop shell for Windows written in na
 
 ## ✨ Features
 
+- **Six New Desktop Layouts, Six Complete Themes** (`Settings → Appearance`):
+  - A layout picker with live schematics switches the home page between **Classic** (the original three-column flow) and six new arrangements: **Bento** (full-width mosaic of unequal tiles), **Console** (three full-width bands with a hero clock), **Feed** (two generous centred columns), **Matrix** (an even 4×2 grid of uniform tiles), **Rail** (a narrow stats rail with wide cards beside it) and **Cascade** (three equal columns dropped to staggered heights).
+  - Every layout ships a **complete restyle**, not just a re-flow: surfaces, all six text steps, the accent, the glass material, the card corner radius, the overlay ink and a matching wallpaper are rewritten in one call — **Neo Tokyo** (indigo glass, cyan/magenta neon), **Terminal Phosphor** (phosphor green on carbon), **Nordic Frost** (light paper, cobalt), **Solar Ember** (warm carbon, amber), **Rose Quartz** (warm porcelain, rose) and **Aurora Teal** (deep teal glass, aqua).
+  - Two of the themes are **light UIs**: the entire shell — cards, shelf, tray, flyouts, launcher, window chrome — flips to dark ink on white through a single overlay-ink (`O()`) channel, so no drawing site needs to know a theme exists.
+  - Three new wallpaper presets ship with them: **Neon Grid**, **Frost Paper** and **Rose Dawn** (the wallpaper swatch grid is now 3×4). Picking a layout also applies its wallpaper and recommended contrast, but never replaces a custom picture or a running video wallpaper.
+  - Layout maths live in `shell_layout.h` as rows → cells → widget stacks: each layout is fitted to the band above the shelf *and* to the canvas before it is walked, so a widget can never slide under the shelf at any of the three widget sizes. The Classic preset reproduces the original `Compute()` flow exactly.
+  - Selected layout persists as `layout` in `shell.ini`; `Reset appearance to defaults` returns to Classic.
+
 - **Obsidian Monolith Aesthetic & Frosted Glass Transparency**:
   - Precision dark metallic gradient palette (`#090A0D` → `#111317` → `#181B22` → `#0D0E12`).
   - **Translucent Frosted Glass Cards**: Desktop widgets, bottom shelf dock, quick settings flyout, and window chrome render with a translucent frosted glass base (`rgba(14, 17, 24, 0.52)`), directional ambient light wash (`rgba(255, 255, 255, 0.038)`), 1px polished glass rim perimeter (`rgba(255, 255, 255, 0.13)`), and razor-sharp top edge highlight hairline (`rgba(255, 255, 255, 0.22)`).
