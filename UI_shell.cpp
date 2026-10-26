@@ -873,58 +873,86 @@ struct AppDef {
 // glyph == 0 → draw `mono` in Consolas instead of an MDL2 glyph.
 static const AppDef APPS[] = {
     // Core Desktop System Windows
-    { L"Files",       0xE8B7, nullptr, APP_FILES,    L"explorer.exe",                nullptr },
-    { L"Terminal",    0,      L">_",   APP_TERM,     L"wt.exe",                      L"powershell.exe" },
-    { L"Settings",    0xE713, nullptr, APP_SETTINGS, L"ms-settings:",               nullptr },
-    { L"Text Editor", 0xE70F, nullptr, APP_EDITOR,   L"notepad.exe",                 nullptr },
-    { L"About",       0xE946, nullptr, APP_ABOUT,    nullptr,                        nullptr },
+    { L"Files",                   0xE8B7, nullptr, APP_FILES,    L"explorer.exe",                                                                                                nullptr },
+    { L"Terminal",                0,      L">_",   APP_TERM,     L"wt.exe",                                                                                                      L"powershell.exe" },
+    { L"Settings",                0xE713, nullptr, APP_SETTINGS, L"ms-settings:",                                                                                               L"control.exe" },
+    { L"Text Editor",             0xE70F, nullptr, APP_EDITOR,   L"notepad.exe",                                                                                                 nullptr },
+    { L"About",                   0xE946, nullptr, APP_ABOUT,    nullptr,                                                                                                        nullptr },
 
-    // Primary Productivity & Media
-    { L"Chrome",      0xE774, nullptr, -1,           L"chrome.exe",                  L"https://www.google.com" },
-    { L"Gmail",       0xE715, nullptr, -1,           L"https://mail.google.com",     L"mailto:" },
-    { L"Calendar",    0xE787, nullptr, -1,           L"outlookcal:",                 L"https://calendar.google.com" },
-    { L"Photos",      0xE91B, nullptr, -1,           L"ms-photos:",                  L"explorer.exe shell:My Pictures" },
-    { L"Play Music",  0xE8D6, nullptr, -1,           L"spotify:",                    L"https://music.youtube.com" },
-    { L"Camera",      0xE722, nullptr, -1,           L"microsoft.windows.camera:",   nullptr },
-    { L"Maps",        0xE707, nullptr, -1,           L"bingmaps:",                   L"https://maps.google.com" },
-    { L"Weather",     0xE706, nullptr, -1,           L"bingweather:",                L"https://weather.com" },
-    { L"Clock",       0xE823, nullptr, -1,           L"ms-clock:",                   nullptr },
-    { L"Store",       0xE719, nullptr, -1,           L"ms-windows-store:",           nullptr },
-    { L"Drive",       0xE753, nullptr, -1,           L"https://drive.google.com",    nullptr },
-    { L"Docs",        0xE8A5, nullptr, -1,           L"https://docs.google.com",     nullptr },
-    { L"Calculator",  0,      L"1+2",  -1,           L"calc.exe",                    L"calculator:" },
-    { L"Notes",       0xE70F, nullptr, -1,           L"onenote:",                    L"notepad.exe" },
-    { L"Meet",        0xE77B, nullptr, -1,           L"https://meet.google.com",     nullptr },
-    { L"Chat",        0xE8BD, nullptr, -1,           L"https://chat.google.com",     L"ms-teams:" },
-    { L"Tasks",       0xE9D5, nullptr, -1,           L"ms-todo:",                    L"https://tasks.google.com" },
-    { L"Files Pro",   0xE8B7, nullptr, -1,           L"explorer.exe shell:Personal", L"explorer.exe" },
-    { L"Help",        0xE897, nullptr, -1,           L"ms-contact-support:",         L"https://support.microsoft.com/windows" },
+    // Primary Everyday Tools & Pinned Favorites
+    { L"Google Chrome",           0xE774, nullptr, -1,           L"chrome.exe",                                                                                                  L"https://www.google.com" },
+    { L"ChatGPT",                 0,      L"AI",   -1,           L"shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App",                                                           L"https://chatgpt.com" },
+    { L"Visual Studio Code",      0,      L"{ }",  -1,           L"code.cmd",                                                                                                    L"code.exe" },
+    { L"Spotify",                 0xE8D6, nullptr, -1,           L"C:\\Users\\jayap\\AppData\\Roaming\\Spotify\\Spotify.exe",                                                    L"spotify:" },
+    { L"Claude",                  0,      L"CL",   -1,           L"shell:AppsFolder\\Claude_pzs8sxrjxfjjc!Claude",                                                               L"https://claude.ai" },
+    { L"Copilot",                 0xE8BD, nullptr, -1,           L"shell:AppsFolder\\Microsoft.MicrosoftOfficeHub_8wekyb3d8bbwe!Microsoft.MicrosoftOfficeHub",                   L"https://copilot.microsoft.com" },
 
-    // Expanded Real Windows Tools, Utilities & Workspaces (All Apps with Down-Scroll)
-    { L"Task Manager",0xE950, nullptr, -1,           L"taskmgr.exe",                 nullptr },
-    { L"Snipping Tool",0xE7C8,nullptr, -1,           L"ms-screenclip:",              L"snippingtool.exe" },
-    { L"Paint",       0xE790, nullptr, -1,           L"mspaint.exe",                 nullptr },
-    { L"Edge",        0xE777, nullptr, -1,           L"msedge.exe",                  L"https://www.bing.com" },
-    { L"VS Code",     0,      L"{ }",  -1,           L"code.cmd",                    L"code.exe" },
-    { L"Command Prompt",0,    L"cmd",  -1,           L"cmd.exe",                     L"powershell.exe" },
-    { L"Control Panel",0xE771,nullptr, -1,           L"control.exe",                 nullptr },
-    { L"Device Manager",0xE7F8,nullptr,-1,           L"devmgmt.msc",                 nullptr },
-    { L"Disk Manager",0xEDA2, nullptr, -1,           L"diskmgmt.msc",                nullptr },
-    { L"Res Monitor", 0xE9E9, nullptr, -1,           L"resmon.exe",                  nullptr },
-    { L"System Info", 0xE7BA, nullptr, -1,           L"msinfo32.exe",                nullptr },
-    { L"Registry",    0xE7AC, nullptr, -1,           L"regedit.exe",                 nullptr },
-    { L"Disk Cleanup",0xE74D, nullptr, -1,           L"cleanmgr.exe",                nullptr },
-    { L"Sound Recorder",0xE720,nullptr,-1,           L"soundrecorder:",              nullptr },
-    { L"Media Player",0xE768, nullptr, -1,           L"wmplayer.exe",                L"mswindowsmusic:" },
-    { L"Sheets",      0,      L"[=]",  -1,           L"https://sheets.google.com",   nullptr },
-    { L"Discord",     0xE714, nullptr, -1,           L"discord:",                    L"https://discord.com/app" },
-    { L"GitHub",      0,      L"git",  -1,           L"https://github.com",          nullptr },
-    { L"YouTube",     0xE714, nullptr, -1,           L"https://www.youtube.com",     nullptr },
-    { L"Reddit",      0xE789, nullptr, -1,           L"https://www.reddit.com",      nullptr },
-    { L"Wikipedia",   0,      L"W",    -1,           L"https://www.wikipedia.org",   nullptr },
-    { L"Char Map",    0xE890, nullptr, -1,           L"charmap.exe",                 nullptr },
-    { L"Magnifier",   0xE721, nullptr, -1,           L"magnify.exe",                 nullptr },
-    { L"Power Plan",  0xE7E8, nullptr, -1,           L"powercfg.cpl",                nullptr },
+    // Developer & Creative Environments
+    { L"Antigravity",             0,      L"AG",   -1,           L"C:\\Users\\jayap\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe",                                    nullptr },
+    { L"Antigravity (Shell)",     0,      L"AG>",  -1,           L"shell:AppsFolder\\electron.app.Antigravity",                                                                  L"wt.exe" },
+    { L"Antigravity IDE",         0,      L"IDE",  -1,           L"C:\\Users\\jayap\\AppData\\Local\\Programs\\Antigravity IDE\\Antigravity IDE.exe",                           nullptr },
+    { L"PyCharm 2025.2.1.1",      0,      L"PC",   -1,           L"C:\\Program Files\\JetBrains\\PyCharm 2025.2.1.1\\bin\\pycharm64.exe",                                        nullptr },
+    { L"Android Studio",          0,      L"AS",   -1,           L"C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Android Studio\\Android Studio.lnk",               nullptr },
+    { L"Arduino IDE",             0,      L"ARD",  -1,           L"C:\\Users\\jayap\\AppData\\Local\\Programs\\Arduino IDE\\Arduino IDE.exe",                                   nullptr },
+    { L"Unity",                   0,      L"UTY",  -1,           L"C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.11f1\\Editor\\Unity.exe",                                       nullptr },
+    { L"Unity Hub",               0,      L"HUB",  -1,           L"C:\\Users\\jayap\\Unity Hub\\Unity Hub.exe",                                                                 nullptr },
+    { L"Rovyl",                   0,      L"RV",   -1,           L"C:\\Users\\jayap\\AppData\\Local\\Programs\\Rovyl\\Rovyl.exe",                                                nullptr },
+    { L"Git",                     0,      L"git",  -1,           L"C:\\Program Files\\Git\\git-bash.exe",                                                                        L"git-bash.exe" },
+    { L"Node.js",                 0,      L"JS",   -1,           L"C:\\Program Files\\nodejs\\node.exe",                                                                         L"node.exe" },
+    { L"Windows Terminal",        0,      L"WT",   -1,           L"wt.exe",                                                                                                      L"powershell.exe" },
+    { L"Visual Studio Installer", 0xE8B7, nullptr, -1,           L"C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Visual Studio Installer.lnk",                      nullptr },
+    { L"Dev Home (Preview)",      0xE7F8, nullptr, -1,           L"shell:AppsFolder\\Microsoft.Windows.DevHome_8wekyb3d8bbwe!App",                                               nullptr },
+
+    // Microsoft 365 & Office Suite
+    { L"Word",                    0xE8A5, nullptr, -1,           L"C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",                                            L"winword.exe" },
+    { L"Excel",                   0,      L"[=]",  -1,           L"C:\\Program Files\\Microsoft Office\\root\\Office16\\EXCEL.EXE",                                              L"excel.exe" },
+    { L"PowerPoint",              0xE789, nullptr, -1,           L"C:\\Program Files\\Microsoft Office\\root\\Office16\\POWERPNT.EXE",                                           L"powerpnt.exe" },
+    { L"OneNote",                 0xE70F, nullptr, -1,           L"C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",                                            L"onenote:" },
+    { L"Sticky Notes (new)",      0xE8A5, nullptr, -1,           L"C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE /notes",                                     L"shell:AppsFolder\\Microsoft.Office.OneNote.MemoryPreview" },
+    { L"Outlook",                 0xE715, nullptr, -1,           L"outlook.exe",                                                                                                 L"shell:AppsFolder\\Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows" },
+    { L"OneDrive",                0xE753, nullptr, -1,           L"onedrive.exe",                                                                                                nullptr },
+    { L"Access",                  0xEDA2, nullptr, -1,           L"C:\\Program Files\\Microsoft Office\\root\\Office16\\MSACCESS.EXE",                                           L"msaccess.exe" },
+    { L"Publisher",               0xE790, nullptr, -1,           L"C:\\Program Files\\Microsoft Office\\root\\Office16\\MSPUB.EXE",                                              L"mspub.exe" },
+
+    // Social, Communication & Automation
+    { L"Microsoft Teams",         0xE77B, nullptr, -1,           L"msteams:",                                                                                                    L"shell:AppsFolder\\MSTeams_8wekyb3d8bbwe!MSTeams" },
+    { L"Telegram Desktop",        0xE714, nullptr, -1,           L"shell:AppsFolder\\TelegramMessengerLLP.TelegramDesktop_t4vj0pshhgkwm!Telegram.TelegramDesktop.Store",         nullptr },
+    { L"LinkedIn",                0,      L"in",   -1,           L"shell:AppsFolder\\7EE7776C.LinkedInforWindows_w1wdnht996qgy!App",                                            L"https://www.linkedin.com" },
+    { L"Zoho Notebook",           0xE70F, nullptr, -1,           L"shell:AppsFolder\\ZohoCorp.ZohoNotebook_hfrrf6a1akhx2!com.zoho.notebook",                                     nullptr },
+    { L"Power Automate",          0xE950, nullptr, -1,           L"shell:AppsFolder\\Microsoft.PowerAutomateDesktop_8wekyb3d8bbwe!PAD.Console",                                  nullptr },
+
+    // Gaming, Media & Graphics
+    { L"Epic Games Launcher",     0xE7FC, nullptr, -1,           L"C:\\Users\\jayap\\Epic Games\\Launcher\\Portal\\Binaries\\Win32\\EpicGamesLauncher.exe",                     nullptr },
+    { L"Xbox",                    0xE7FC, nullptr, -1,           L"xbox:",                                                                                                       L"shell:AppsFolder\\Microsoft.GamingApp_8wekyb3d8bbwe!Microsoft.Xbox.App" },
+    { L"Media Player",            0xE768, nullptr, -1,           L"mswindowsmusic:",                                                                                             L"wmplayer.exe" },
+    { L"Clipchamp",               0xE8B2, nullptr, -1,           L"clipchamp:",                                                                                                  L"shell:AppsFolder\\Clipchamp.Clipchamp_yxz26nhyzhsrt!App" },
+    { L"Dolby Access",            0xE767, nullptr, -1,           L"dolbyaccess:",                                                                                                L"shell:AppsFolder\\DolbyLaboratories.DolbyAccessOEM_rz1tebttyb220!App" },
+    { L"Intel Arc & Graphics",    0xE7F8, nullptr, -1,           L"shell:AppsFolder\\AppUp.IntelArcSoftware_8j3eq9eme6ctt!INTELGRAPHICSSOFTWARE",                                L"shell:AppsFolder\\AppUp.IntelGraphicsExperience_8j3eq9eme6ctt!App" },
+    { L"Paint",                   0xE790, nullptr, -1,           L"mspaint.exe",                                                                                                 L"ms-paint:" },
+    { L"Photos",                  0xE91B, nullptr, -1,           L"ms-photos:",                                                                                                  nullptr },
+    { L"Snipping Tool",           0xE7C8, nullptr, -1,           L"ms-screenclip:",                                                                                              L"snippingtool.exe" },
+
+    // Utilities, OEM Support & Accessories
+    { L"Dell SupportAssist",      0xE946, nullptr, -1,           L"shell:AppsFolder\\DellInc.DellSupportAssistforPCs_htrsf667h5kn2!App",                                         nullptr },
+    { L"Dell Digital Delivery",   0xE719, nullptr, -1,           L"shell:AppsFolder\\DellInc.DellDigitalDelivery_htrsf667h5kn2!App",                                             nullptr },
+    { L"Calculator",              0,      L"1+2",  -1,           L"calc.exe",                                                                                                    L"calculator:" },
+    { L"Calendar",                0xE787, nullptr, -1,           L"outlookcal:",                                                                                                 L"shell:AppsFolder\\microsoft.windowscommunicationsapps_8wekyb3d8bbwe!microsoft.windowslive.calendar" },
+    { L"Clock",                   0xE823, nullptr, -1,           L"ms-clock:",                                                                                                   nullptr },
+    { L"Camera",                  0xE722, nullptr, -1,           L"microsoft.windows.camera:",                                                                                   nullptr },
+    { L"Weather",                 0xE706, nullptr, -1,           L"bingweather:",                                                                                                nullptr },
+    { L"Maps",                    0xE707, nullptr, -1,           L"bingmaps:",                                                                                                   nullptr },
+    { L"News",                    0xE789, nullptr, -1,           L"bingnews:",                                                                                                   L"shell:AppsFolder\\Microsoft.BingNews_8wekyb3d8bbwe!AppexNews" },
+    { L"Phone Link",              0xE717, nullptr, -1,           L"ms-phone:",                                                                                                   L"shell:AppsFolder\\Microsoft.YourPhone_8wekyb3d8bbwe!App" },
+    { L"Microsoft To Do",         0xE9D5, nullptr, -1,           L"ms-todo:",                                                                                                    L"shell:AppsFolder\\Microsoft.Todos_8wekyb3d8bbwe!App" },
+    { L"7-Zip File Manager",      0xE8B7, nullptr, -1,           L"C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\7-Zip\\7-Zip File Manager.lnk",                   nullptr },
+    { L"7-Zip Help",              0xE897, nullptr, -1,           L"C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\7-Zip\\7-Zip Help.lnk",                           nullptr },
+    { L"Notepad",                 0xE70F, nullptr, -1,           L"notepad.exe",                                                                                                 nullptr },
+    { L"Character Map",           0xE890, nullptr, -1,           L"charmap.exe",                                                                                                 nullptr },
+    { L"Control Panel",           0xE771, nullptr, -1,           L"control.exe",                                                                                                 nullptr },
+    { L"Computer Management",     0xE713, nullptr, -1,           L"compmgmt.msc",                                                                                                nullptr },
+    { L"Component Services",      0xE950, nullptr, -1,           L"comexp.msc",                                                                                                  nullptr },
+    { L"Defragment & Optimize",   0xEDA2, nullptr, -1,           L"dfrgui.exe",                                                                                                  nullptr },
+    { L"Disk Cleanup",            0xE74D, nullptr, -1,           L"cleanmgr.exe",                                                                                                nullptr },
 };
 static const int APP_N = (int)(sizeof(APPS) / sizeof(APPS[0]));
 
@@ -1815,7 +1843,7 @@ static const float SHELF_Y = 1096.f;
 static const float SHELF_H = 80.f;
 
 // Pinned shelf entries (indices into APPS).
-static const int PINNED[] = { APP_FILES, APP_TERM, 5, 6, 8, 9, APP_SETTINGS };
+static const int PINNED[] = { APP_FILES, APP_TERM, 5, 7, 6, 8, APP_SETTINGS };
 static const int PINNED_N = (int)(sizeof(PINNED) / sizeof(PINNED[0]));
 
 static float ShelfWidth() { return 28.f + 56.f * (float)(PINNED_N + 1) + 8.f * (float)PINNED_N; }
@@ -2732,6 +2760,34 @@ static void OpenApp(int kind) {
 
 static bool TryShellExec(const wchar_t* target, const wchar_t* params = nullptr) {
     if (!target || !target[0]) return false;
+
+    // 1) shell:AppsFolder\... launch via explorer.exe
+    if (_wcsnicmp(target, L"shell:AppsFolder\\", 17) == 0) {
+        HINSTANCE hInst = ShellExecuteW(nullptr, L"open", L"explorer.exe", target, nullptr, SW_SHOWNORMAL);
+        return ((INT_PTR)hInst > 32);
+    }
+
+    // 2) Windows shortcut (.lnk): launch via explorer.exe
+    size_t len = wcslen(target);
+    if (len > 4 && _wcsicmp(target + len - 4, L".lnk") == 0) {
+        HINSTANCE hInst = ShellExecuteW(nullptr, L"open", L"explorer.exe", target, nullptr, SW_SHOWNORMAL);
+        if ((INT_PTR)hInst > 32) return true;
+    }
+
+    // 3) Embedded command arguments (e.g. "ONENOTE.EXE /notes")
+    if (!params) {
+        std::wstring s(target);
+        size_t p = s.find(L".exe ");
+        if (p == std::wstring::npos) p = s.find(L".EXE ");
+        if (p == std::wstring::npos) p = s.find(L".cmd ");
+        if (p != std::wstring::npos) {
+            std::wstring exePart = s.substr(0, p + 4);
+            std::wstring argPart = s.substr(p + 5);
+            HINSTANCE hInst = ShellExecuteW(nullptr, L"open", exePart.c_str(), argPart.c_str(), nullptr, SW_SHOWNORMAL);
+            if ((INT_PTR)hInst > 32) return true;
+        }
+    }
+
     HINSTANCE hInst = ShellExecuteW(nullptr, L"open", target, params, nullptr, SW_SHOWNORMAL);
     return ((INT_PTR)hInst > 32);
 }
