@@ -40,8 +40,8 @@ A high-performance, hardware-accelerated desktop shell for Windows written in na
 
 - **Desktop Shell & Productivity**:
   - **Direct Real Windows App Launching**: App icons across the searchable Launcher, Home Screen grid, and Pinned Shelf directly execute real Windows programs and URI protocols (`explorer.exe`, Windows Terminal `wt.exe`/PowerShell, Windows Settings `ms-settings:`, Notepad, Google Chrome, Spotify, Windows Photos `ms-photos:`, Camera `microsoft.windows.camera:`, Calculator `calc.exe`, OneNote, Microsoft Store, Microsoft To Do, and Google Workspace web services) with graceful fallbacks.
-  - **Swipeable Home Pager & Predictive Physics**: 2-page desktop experience. Page 0 hosts interactive desktop widgets in the classic layout; Page 1 hosts the Side Screen with the full 48-app library. Powered by a 2nd-order critically damped harmonic spring (`\omega = 13.5\text{ rad/s}`) with zero-jerk release velocity carryover, 120ms weighted least-squares regression velocity tracking, and smooth hyperbolic rubber-band boundaries. Supports mouse drags, touchpad 2-finger horizontal swipes (`WM_MOUSEHWHEEL`), arrow keys, and animated indicator dots.
-  - **Side Screen All-Apps Down-Scroll**: Page 1 features a full library of 48 real applications with smooth vertical down-scroll. Powered by `smooth-scrollbar` momentum damping, mouse wheel support, touch/pointer vertical drag with gesture disambiguation (`|dy| > |dx| * 1.15`), and a sleek frosted glass scrollbar indicator. Scrolling up at the top fluidly transitions back to Page 0.
+  - **Swipeable Home Pager (Side Scroll)**: 2-page desktop experience with clean horizontal side scroll. Page 0 hosts interactive desktop widgets in the classic layout; Page 1 hosts the Side Screen with the full 48-app library. Powered by a 2nd-order critically damped harmonic spring (`\omega = 13.5\text{ rad/s}`) with zero-jerk release velocity carryover, 120ms weighted least-squares regression velocity tracking, and smooth hyperbolic rubber-band boundaries. Side-scroll horizontally via touchpad 2-finger horizontal swipe (`WM_MOUSEHWHEEL`), horizontal pointer swipe (`←` / `→`), Left/Right arrow keys, or the bottom frosted glass switcher capsule (`[ ⊞ Desktop ]` / `[ ▦ All Apps ]`).
+  - **Side Screen All-Apps (Up and Down Scroll)**: Page 1 features a full library of 48 real applications with dedicated vertical up and down scroll. Completely separated from side scroll: vertical mouse wheel (`WM_MOUSEWHEEL`) purely scrolls down/up without ever flipping pages sideways, even at boundaries; vertical drag provides fluid momentum glide with release velocity tracking; and a frosted glass vertical scrollbar offers direct track clicking and thumb dragging.
   - **Ultra-Smooth 1ms Frame Pacing**: Utilizes Windows multimedia timers (`timeBeginPeriod(1)`) with a 100 Hz cadence to eliminate micro-stuttering across 60 Hz to 165 Hz displays.
   - **Dynamic Text Zoom**: Scale small interface typography on the fly with `Ctrl +`, `Ctrl -`, and `Ctrl 0` (range 90%–150%, default 115%), persisted automatically to `shell.ini`.
   - **App Launcher**: Fullscreen searchable launcher overlay containing 24 curated system apps and utilities with real-time text filtering and keyboard selection (`Enter`).
@@ -91,9 +91,14 @@ UI_shell.exe
 | :--- | :--- |
 | `F11` | Toggle borderless fullscreen mode |
 | `Esc` | Dismiss App Launcher, Settings, or Quick Settings flyout |
-| `←` / `→` | Switch between Home Screen pages (Widgets / Apps) |
-| `Swipe / Drag` | Smooth horizontal drag or 2-finger touchpad swipe between pages |
-| `Mouse Wheel / Drag on Page 1` | Smooth vertical down-scroll through all 48 apps on Side Screen |
+| `←` / `→` | **Side Scroll**: Switch between Desktop (Home) and All Apps (Side Screen) |
+| `Horizontal Swipe / Trackpad H-Wheel` | **Side Scroll**: 2-finger horizontal swipe between pages |
+| `Click Capsule [ Desktop / All Apps ]` | **Side Scroll**: Direct 1-click page switcher at screen bottom |
+| `Click [ ← Desktop ]` | **Side Scroll**: Back pill on the Side Screen header |
+| `Mouse Wheel on Page 1` | **Up and Down Scroll**: Scroll through all 48 apps with momentum |
+| `Vertical Drag on Page 1` | **Up and Down Scroll**: Direct drag with velocity carryover fling |
+| `Drag Frosted Scrollbar` | **Up and Down Scroll**: Click track or drag thumb directly |
+| `↑` / `↓` / `PgUp` / `PgDn` | **Up and Down Scroll**: Scroll through apps on the Side Screen |
 | `Right-Click Desktop` | Open context menu (Choose wallpaper, Settings, Fullscreen) |
 | `Ctrl +` / `Ctrl -` | Increase / decrease interface text size (90% – 150%) |
 | `Ctrl 0` | Reset interface text size to 115% |

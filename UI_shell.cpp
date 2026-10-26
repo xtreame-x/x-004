@@ -552,6 +552,10 @@ static float g_appMaxScroll = 0.f;
 static bool  g_appVDrag = false;
 static float g_appDragStartY = 0.f;
 static float g_appDragStartScroll = 0.f;
+static bool  g_appScrollDrag = false;
+static float g_appScrollDragStartY = 0.f;
+static float g_appScrollDragStartScroll = 0.f;
+static TouchPredictor g_appVTracker;
 
 // Two-finger touchpad swipe (WM_MOUSEHWHEEL).
 static const float HSWIPE_DIR = 1.f;
@@ -609,7 +613,10 @@ enum {
     H_UNLOCK = 850, H_FILE = 870,            // + row
     H_DESK = 900,
     H_HAPP = 1000,                           // + index (home-screen app tiles)
-    H_HDOT = 1200                            // + page  (home page dots)
+    H_HDOT = 1200,                           // + page  (home page dots / switcher pills)
+    H_APP_BACK = 1210,                       // Side Screen back to desktop button
+    H_APP_SCROLL_TRACK = 1220,               // Side Screen scrollbar track
+    H_APP_SCROLL_THUMB = 1221                // Side Screen scrollbar thumb
 };
 enum { WP_BODY = 0, WP_TITLE = 1, WP_CLOSE = 2, WP_MIN = 3, WP_MAX = 4,
        WP_RIGHT = 5, WP_BOTTOM = 6, WP_CORNER = 7 };
@@ -2771,7 +2778,7 @@ static bool PagerHit(int id) {
            (id >= H_PREV && id <= H_REPEAT && id != H_SEEK);
 }
 static bool PagerAreaHit(int id) {
-    return PagerHit(id) || (id >= H_HDOT && id < H_HDOT + HOME_PAGES);
+    return PagerHit(id) || (id >= H_HDOT && id < H_HDOT + HOME_PAGES) || id == H_APP_BACK;
 }
 // Smooth hyperbolic rubber-band resistance curve (C1 continuous at boundaries)
 static float RubberPos(float p) {
@@ -2795,16 +2802,23 @@ static void DrawHomeApps() {
     const int cols = 6;
     const float cellW = 240.f, cellH = 176.f;
     const float x0 = (DW - (float)cols * cellW) * 0.5f, y0 = 146.f;
-    const float clipTop = 136.f, clipH = 924.f;
+    const float clipTop = 136.f, clipH = 880.f;
 
     int rows = (APP_N + cols - 1) / cols;
     float totalH = (float)rows * cellH + 30.f;
     g_appMaxScroll = std::max(0.f, totalH - clipH);
 
-    // Fixed Top Header above the scrolling viewport
-    Txt(L"All Applications", x0, 72.f, 340.f, 32.f, F_SEMI, 20.f, 600, COL_T100, 0, 1.f);
-    Txt(std::to_wstring(APP_N) + L" installed \u2022 Scroll down for full library",
-        x0, 104.f, 440.f, 22.f, F_UI, 12.f, 400, COL_T50, 0, 1.f);
+    // Fixed Top Header: "<- Desktop" Back Pill Button (Side Scroll) + Page Title
+    bool backHov = (g_hover == H_APP_BACK);
+    Fill(x0, 72.f, 132.f, 34.f, 17.f, C(WHITE, backHov ? 0.12f : 0.05f));
+    Stroke(x0, 72.f, 132.f, 34.f, 17.f, C(WHITE, backHov ? 0.30f : 0.12f), 1.f);
+    Glyph((wchar_t)0xE72B, x0 + 20.f, 89.f, 11.f, backHov ? COL_T100 : COL_T80);
+    Txt(L"Desktop", x0 + 40.f, 80.f, 80.f, 18.f, F_UI, 12.f, 500, backHov ? COL_T100 : COL_T80, 0, 1.f);
+    AddHit(x0, 72.f, 132.f, 34.f, H_APP_BACK);
+
+    Txt(L"All Applications", x0 + 152.f, 70.f, 340.f, 34.f, F_SEMI, 22.f, 600, COL_T100, 0, 1.f);
+    Txt(std::to_wstring(APP_N) + L" installed \u2022 Down-scroll to browse full library",
+        x0 + 154.f, 104.f, 440.f, 20.f, F_UI, 12.f, 400, COL_T50, 0, 1.f);
 
     // Viewport Clipping for Smooth Down-Scroll
     g_rt->PushAxisAlignedClip(R(x0 - 24.f, clipTop, (float)cols * cellW + 48.f, clipH), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -2813,7 +2827,7 @@ static void DrawHomeApps() {
         float cx = x0 + (float)(i % cols) * cellW + cellW * 0.5f;
         float cy = y0 + (float)(i / cols) * cellH - g_appScroll + 70.f;
         if (cy + 96.f < clipTop || cy - 96.f > clipTop + clipH) continue;
-        bool hov = (g_hover == H_HAPP + i) && !g_pdrag && !g_appVDrag;
+        bool hov = (g_hover == H_HAPP + i) && !g_pdrag && !g_appVDrag && !g_appScrollDrag;
         if (hov) Fill(cx - 96.f, cy - 64.f, 192.f, 156.f, 20.f, C(WHITE, 0.055f));
         AppIcon(APPS[i], cx, cy - 14.f, 84.f, 32.f, hov);
         Txt(APPS[i].name, cx - 96.f, cy + 42.f, 192.f, 24.f, F_UI, 12.5f, 500,
@@ -2823,27 +2837,61 @@ static void DrawHomeApps() {
 
     g_rt->PopAxisAlignedClip();
 
-    // Sleek frosted glass vertical scrollbar indicator
+    // Interactive Frosted Glass Vertical Scrollbar (Clickable track + draggable thumb)
     if (g_appMaxScroll > 4.f) {
         float trackX = x0 + (float)cols * cellW + 24.f;
-        float trackY = 146.f, trackH = 900.f;
-        float thumbH = std::max(56.f, trackH * (clipH / (clipH + g_appMaxScroll)));
+        float trackY = 146.f, trackH = 860.f;
+        float thumbH = std::max(60.f, trackH * (clipH / (clipH + g_appMaxScroll)));
         float thumbY = trackY + (trackH - thumbH) * (g_appScroll / g_appMaxScroll);
-        Fill(trackX, trackY, 5.f, trackH, 2.5f, C(WHITE, 0.05f));
-        Fill(trackX, thumbY, 5.f, thumbH, 2.5f, C(WHITE, 0.32f));
+        bool trackHov = (g_hover == H_APP_SCROLL_TRACK);
+        bool thumbHov = (g_hover == H_APP_SCROLL_THUMB) || g_appScrollDrag;
+
+        // Track
+        Fill(trackX - 2.f, trackY, 10.f, trackH, 5.f, C(WHITE, trackHov ? 0.08f : 0.04f));
+        AddHit(trackX - 8.f, trackY, 22.f, trackH, H_APP_SCROLL_TRACK);
+
+        // Thumb
+        Fill(trackX - 1.f, thumbY, 8.f, thumbH, 4.f, C(WHITE, thumbHov ? 0.45f : 0.28f));
+        AddHit(trackX - 10.f, thumbY, 26.f, thumbH, H_APP_SCROLL_THUMB);
     }
 }
 
+// Side Scroll Page Switcher: Frosted glass capsule with Desktop and All Apps buttons
 static void DrawPageDots() {
     if (HOME_PAGES < 2) return;
-    const float cy = 1066.f, step = 22.f;
-    const float total = step * (float)(HOME_PAGES - 1);
+    const float cy = 1056.f;
+    const float pillW = 260.f, pillH = 36.f;
+    const float x0 = (DW - pillW) * 0.5f;
+
+    // Capsule background
+    Fill(x0, cy - pillH * 0.5f, pillW, pillH, pillH * 0.5f, C(0x0E1118, 0.72f));
+    Stroke(x0, cy - pillH * 0.5f, pillW, pillH, pillH * 0.5f, C(WHITE, 0.12f), 1.f);
+
+    const wchar_t* labels[2] = { L"Desktop", L"All Apps" };
+    const wchar_t icons[2] = { (wchar_t)0xE80F, (wchar_t)0xE71D };
+    float segW = (pillW - 8.f) * 0.5f;
+
     for (int p = 0; p < HOME_PAGES; ++p) {
-        float cx = DW * 0.5f - total * 0.5f + (float)p * step;
+        float sx = x0 + 4.f + (float)p * segW;
+        float sy = cy - pillH * 0.5f + 3.f;
+        float sh = pillH - 6.f;
         float prox = 1.f - std::min(1.f, std::fabs((float)p - g_pageA.x));
-        float a = Clamp(0.22f + 0.73f * prox + ((g_hover == H_HDOT + p) ? 0.2f : 0.f), 0.f, 1.f);
-        Disc(cx, cy, 3.2f + 1.8f * prox, C(prox > 0.5f ? COL_T90 : WHITE, a));
-        AddHit(cx - 12.f, cy - 12.f, 24.f, 24.f, H_HDOT + p);
+        bool hov = (g_hover == H_HDOT + p);
+
+        if (prox > 0.05f) {
+            Fill(sx, sy, segW, sh, sh * 0.5f, C(WHITE, 0.12f * prox));
+            if (prox > 0.65f) {
+                Stroke(sx, sy, segW, sh, sh * 0.5f, C(COL_ACTIVE, 0.60f * (prox - 0.65f) / 0.35f), 1.f);
+            }
+        } else if (hov) {
+            Fill(sx, sy, segW, sh, sh * 0.5f, C(WHITE, 0.05f));
+        }
+
+        Glyph(icons[p], sx + 20.f, cy, 10.5f, prox > 0.5f ? COL_T100 : (hov ? COL_T80 : COL_T50));
+        Txt(labels[p], sx + 36.f, cy - 9.f, segW - 44.f, 18.f, F_UI, 11.5f, prox > 0.5f ? 600 : 400,
+            prox > 0.5f ? COL_T100 : (hov ? COL_T80 : COL_T50), 0, 1.f);
+
+        AddHit(sx, sy, segW, sh, H_HDOT + p);
     }
 }
 
@@ -3112,6 +3160,7 @@ static void HandleClick(int id, float mx, float my) {
 
     if (id >= H_HAPP && id < H_HAPP + APP_N) { g_panel = PANEL_NONE; return; }   // click-away while a panel is open
     if (id >= H_HDOT && id < H_HDOT + HOME_PAGES) { GoPage(id - H_HDOT); return; }
+    if (id == H_APP_BACK) { GoPage(0, -3.2f); return; }
 
     // --- named controls ------------------------------------------------------
     (void)mx; (void)my;
@@ -3206,8 +3255,17 @@ static void OnKeyDown(WPARAM vk) {
         return;
     }
 
+    // Side Scroll: Left / Right arrow keys switch between Desktop and Side Screen
     if ((vk == VK_LEFT || vk == VK_RIGHT) && g_panel == PANEL_NONE && g_focus < 0 && !g_ctxOpen) {
         GoPage(g_page + (vk == VK_RIGHT ? 1 : -1));
+        return;
+    }
+
+    // Up and Down Scroll: Up / Down / PageUp / PageDown keys scroll apps list on Side Screen
+    if ((vk == VK_UP || vk == VK_DOWN || vk == VK_PRIOR || vk == VK_NEXT) && g_page == 1 && g_panel == PANEL_NONE && g_focus < 0 && !g_ctxOpen) {
+        float step = (vk == VK_PRIOR || vk == VK_NEXT) ? 450.f : 160.f;
+        if (vk == VK_UP || vk == VK_PRIOR) g_appTargetScroll = Clamp(g_appTargetScroll - step, 0.f, g_appMaxScroll);
+        else g_appTargetScroll = Clamp(g_appTargetScroll + step, 0.f, g_appMaxScroll);
         return;
     }
 
@@ -3398,22 +3456,49 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(h, nullptr, FALSE);
             return 0;
         }
+        if (g_appScrollDrag) {
+            const int cols = 6;
+            const float cellW = 240.f;
+            const float trackY = 146.f, trackH = 860.f, clipH = 880.f;
+            float thumbH = std::max(60.f, trackH * (clipH / (clipH + g_appMaxScroll)));
+            float ratio = (my - trackY - thumbH * 0.5f) / std::max(1.f, trackH - thumbH);
+            g_appTargetScroll = Clamp(ratio * g_appMaxScroll, 0.f, g_appMaxScroll);
+            g_appScroll = g_appTargetScroll;
+            InvalidateRect(h, nullptr, FALSE);
+            return 0;
+        }
+
         if (g_pdown) {
             double now = NowSec();
             g_tracker.Add(mx, now);
+            g_appVTracker.Add(my, now);
             float dx = mx - g_pdx0, dy = my - g_pdy0;
+
             if (!g_pdrag && !g_appVDrag) {
-                if (g_page == 1 && std::fabs(dy) > 10.f && std::fabs(dy) > std::fabs(dx) * 1.15f) {
-                    g_appVDrag = true;
-                    g_appDragStartY = my;
-                    g_appDragStartScroll = g_appTargetScroll;
-                    g_hover = H_NONE;
-                } else if (std::fabs(dx) > 11.f && std::fabs(dx) > std::fabs(dy)) {
-                    g_pdrag = true;                  // horizontal intent: this is a swipe, not a tap
-                    g_hover = H_NONE;
+                if (g_page == 1) {
+                    // On Side Screen: ANY vertical motion is strictly UP AND DOWN SCROLL
+                    if (std::fabs(dy) > 4.f && std::fabs(dy) >= std::fabs(dx) * 0.7f) {
+                        g_appVDrag = true;
+                        g_appDragStartY = my;
+                        g_appDragStartScroll = g_appTargetScroll;
+                        g_hover = H_NONE;
+                    }
+                    // Only an unmistakable horizontal fling initiates SIDE SCROLL back to Desktop
+                    else if (std::fabs(dx) > 30.f && std::fabs(dx) > std::fabs(dy) * 2.5f) {
+                        g_pdrag = true;
+                        g_hover = H_NONE;
+                    }
+                } else {
+                    // On Home Screen: Horizontal drag is SIDE SCROLL to Side Screen
+                    if (std::fabs(dx) > 12.f && std::fabs(dx) > std::fabs(dy) * 1.4f) {
+                        g_pdrag = true;
+                        g_hover = H_NONE;
+                    }
                 }
             }
+
             if (g_appVDrag) {
+                // Pure vertical down/up scroll with 1:1 precision
                 float newScroll = Clamp(g_appDragStartScroll - (my - g_appDragStartY), 0.f, g_appMaxScroll);
                 g_appTargetScroll = newScroll;
                 g_appScroll = newScroll;
@@ -3421,7 +3506,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             if (g_pdrag) {
-                // Rock-solid 1:1 finger tracking during active drag (no lookahead jitter)
+                // Pure horizontal side-scroll with 1:1 tracking
                 float curDx = mx - g_pdx0;
                 float targetPos = RubberPos(g_pstartPos - curDx / DW);
                 g_pageA.Follow(targetPos, g_dt);
@@ -3498,15 +3583,34 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
+        if (id == H_APP_SCROLL_THUMB || id == H_APP_SCROLL_TRACK) {
+            g_appScrollDrag = true;
+            g_appScrollDragStartY = my;
+            g_appScrollDragStartScroll = g_appTargetScroll;
+            if (id == H_APP_SCROLL_TRACK) {
+                const float trackY = 146.f, trackH = 860.f, clipH = 880.f;
+                float thumbH = std::max(60.f, trackH * (clipH / (clipH + g_appMaxScroll)));
+                float ratio = (my - trackY - thumbH * 0.5f) / std::max(1.f, trackH - thumbH);
+                g_appTargetScroll = Clamp(ratio * g_appMaxScroll, 0.f, g_appMaxScroll);
+                g_appScroll = g_appTargetScroll;
+            }
+            SetCapture(h);
+            InvalidateRect(h, nullptr, FALSE);
+            return 0;
+        }
+
         if (g_panel == PANEL_NONE && PagerHit(id)) {
             g_pdown = true;
             g_pdrag = false;
+            g_appVDrag = false;
             g_pdid = id;
             g_pdx0 = mx;
             g_pdy0 = my;
             g_pstartPos = g_pageA.x;
             g_tracker.Reset();
             g_tracker.Add(mx, NowSec());
+            g_appVTracker.Reset();
+            g_appVTracker.Add(my, NowSec());
             SetCapture(h);
             if (id == H_DESK) HandleClick(id, mx, my);
             InvalidateRect(h, nullptr, FALSE);
@@ -3538,6 +3642,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         g_dragPart = 0;
         g_dragSlider = -1;
         g_appVDrag = false;
+        g_appScrollDrag = false;
         if (g_pdown) {                           // capture stolen mid-swipe: just settle
             bool was = g_pdrag;
             g_pdown = false;
@@ -3546,6 +3651,12 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_LBUTTONUP:
+        if (g_appScrollDrag) {
+            g_appScrollDrag = false;
+            ReleaseCapture();
+            InvalidateRect(h, nullptr, FALSE);
+            return 0;
+        }
         if (g_pdown) {
             float mx, my;
             ToDesign(lp, mx, my);
@@ -3557,7 +3668,16 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             g_pdrag = false;
             g_appVDrag = false;
             ReleaseCapture();
-            if (wasDrag) {
+
+            if (wasVDrag) {
+                // Carry over vertical release velocity into smooth-scrollbar momentum
+                float vy = g_appVTracker.GetVelocity(now);
+                if (std::fabs(vy) > 120.f) {
+                    float flingDelta = vy * 0.28f;
+                    g_appTargetScroll = Clamp(g_appTargetScroll - flingDelta, 0.f, g_appMaxScroll);
+                }
+            } else if (wasDrag) {
+                // Carry over horizontal release velocity into 2nd-order critically damped spring
                 float v = g_tracker.GetVelocity(now);
                 float dx = mx - g_pdx0;
                 const int base = (int)std::floor(g_pstartPos + 0.5f);
@@ -3575,7 +3695,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                 // Seamless glide: transfer release velocity directly into the 2nd-order spring
                 float releaseVel = Clamp(-v / DW, -7.0f, 7.0f);
                 GoPage(target, releaseVel);
-            } else if (!wasVDrag) {
+            } else {
                 if (HitTest(mx, my) == did) {
                     if (did >= H_HAPP && did < H_HAPP + APP_N) HomeAppTap(did - H_HAPP);
                     else if (did != H_DESK) HandleClick(did, mx, my);
@@ -3610,27 +3730,17 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         ScreenToClient(h, &p);
         float mx, my;
         ToDesignXY(p.x, p.y, mx, my);
-        if (!g_locked && g_panel == PANEL_NONE && PagerAreaHit(HitTest(mx, my))) {
-            static double lastWheel = 0.0;           // one page per wheel flick
-            double now = NowSec();
+        int hit = HitTest(mx, my);
+
+        if (!g_locked && g_panel == PANEL_NONE && g_page == 1 && PagerAreaHit(hit)) {
+            // Side Screen: Pure vertical UP AND DOWN SCROLL through apps with smooth momentum
+            // Never triggers Side Scroll (GoPage) - staying strictly vertical!
             int d = GET_WHEEL_DELTA_WPARAM(wp);
-            if (g_page == 1) {
-                // Side Screen: ALL APPS down scroll with smooth-scrollbar momentum damping
-                float scrollDelta = (float)d / 120.f * 130.f;
-                if (g_appTargetScroll <= 8.f && d > 0 && (now - lastWheel > 0.22)) {
-                    // At the top and scrolling up: flick back to Page 0
-                    GoPage(0, -3.2f);
-                    lastWheel = now;
-                } else {
-                    g_appTargetScroll = Clamp(g_appTargetScroll - scrollDelta, 0.f, g_appMaxScroll);
-                }
-            } else {
-                if (d != 0 && now - lastWheel > 0.22) {
-                    float v = (d < 0 ? 3.2f : -3.2f);
-                    GoPage(g_page + (d < 0 ? 1 : -1), v);
-                    lastWheel = now;
-                }
-            }
+            float scrollDelta = (float)d / 120.f * 140.f;
+            g_appTargetScroll = Clamp(g_appTargetScroll - scrollDelta, 0.f, g_appMaxScroll);
+        } else if (!g_locked && g_panel == PANEL_NONE && g_page == 0 && PagerAreaHit(hit)) {
+            // Home Screen desktop: vertical wheel does NOT flip pages horizontally!
+            // Side scroll is strictly horizontal.
         } else {
             ScrollWindowAt(mx, my, (float)GET_WHEEL_DELTA_WPARAM(wp) / 120.f * 60.f);
         }
