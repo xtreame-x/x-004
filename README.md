@@ -46,7 +46,7 @@ A high-performance, hardware-accelerated desktop shell for Windows written in na
   - **Ultra-Smooth 1ms Frame Pacing**: Utilizes Windows multimedia timers (`timeBeginPeriod(1)`) with a 100 Hz cadence to eliminate micro-stuttering across 60 Hz to 165 Hz displays.
   - **Dynamic Text Zoom**: Scale small interface typography on the fly with `Ctrl +`, `Ctrl -`, and `Ctrl 0` (range 90%–150%, default 115%), persisted automatically to `shell.ini`.
   - **App Launcher**: Fullscreen searchable launcher overlay containing 24 curated system apps and utilities with real-time text filtering and keyboard selection (`Enter`).
-  - **Quick Settings Flyout**: ChromeOS-inspired system tray shelf with Wi-Fi, Bluetooth, Do Not Disturb, Night Light, and Volume controls.
+  - **Quick Settings Flyout**: ChromeOS-inspired system tray shelf with Wi-Fi, Bluetooth, Do Not Disturb, Night Light, live physical hardware brightness and volume sliders, real Windows workstation locking (`LockWorkStation`), and real Windows Settings launching (`ms-settings:` / `control.exe`).
   - **Adaptive Bounds**: DPI-aware layout engine (`shell_layout.h`) ensuring consistent proportions across 16:10 and 16:9 displays without double-scaling bugs.
   - **Fullscreen Toggle**: Press `F11` to toggle between desktop window mode and borderless immersion mode.
 

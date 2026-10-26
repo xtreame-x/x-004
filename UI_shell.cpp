@@ -2355,7 +2355,7 @@ static void RunContextCommand(int cmd) {
     case CTX_LAUNCH: g_panel = PANEL_LAUNCH; break;
     case CTX_SYS:    g_panel = PANEL_SYS; break;
     case CTX_FULL:   ToggleFullscreen(g_hwnd); break;
-    case CTX_LOCK:   g_locked = true; g_panel = PANEL_NONE; break;
+    case CTX_LOCK:   g_panel = PANEL_NONE; g_ctxOpen = false; LockWorkStation(); break;
     case CTX_QUIT:   PostMessageW(g_hwnd, WM_CLOSE, 0, 0); break;
     default: break;
     }
@@ -3410,9 +3410,17 @@ static void HandleClick(int id, float mx, float my) {
     case H_NEXT: g_pos = 0.f; ShowToast(L"Next track", (wchar_t)0xE893); break;
     case H_SHUFFLE: ShowToast(L"Shuffle on", (wchar_t)0xE8B1); break;
     case H_REPEAT: ShowToast(L"Repeat all", (wchar_t)0xE8EE); break;
-    case H_LOCK: g_locked = true; g_panel = PANEL_NONE; break;
+    case H_LOCK:
+        g_panel = PANEL_NONE;
+        LockWorkStation(); // Real Windows Lock Workstation
+        break;
     case H_UNLOCK: g_locked = false; ShowToast(L"Welcome back, Buffy", (wchar_t)0xE72E); break;
-    case H_SETTINGS: OpenApp(APP_SETTINGS); break;
+    case H_SETTINGS:
+        g_panel = PANEL_NONE;
+        if (!TryShellExec(L"ms-settings:")) {
+            TryShellExec(L"control.exe");
+        }
+        break;
     case H_POWER: PostMessageW(g_hwnd, WM_CLOSE, 0, 0); break;
     case H_DESK:
         if (g_panel != PANEL_NONE) g_panel = PANEL_NONE;
@@ -3966,26 +3974,31 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         ScreenToClient(h, &p);
         float mx, my;
         ToDesignXY(p.x, p.y, mx, my);
-        int hit = HitTest(mx, my);
 
-        if (!g_locked && g_panel == PANEL_NONE && g_page == 1 && PagerAreaHit(hit)) {
-            // Side Screen: Pure vertical UP AND DOWN SCROLL through apps with smooth momentum
-            // Never triggers Side Scroll (GoPage) - staying strictly vertical!
+        // Check if an open floating window is under cursor
+        bool overWin = false;
+        for (int i = (int)g_z.size() - 1; i >= 0; --i) {
+            Win& w = g_win[g_z[i]];
+            if (w.open && !w.min && mx >= w.x && mx <= w.x + w.w && my >= w.y && my <= w.y + w.h) {
+                overWin = true;
+                break;
+            }
+        }
+
+        if (overWin) {
+            ScrollWindowAt(mx, my, (float)GET_WHEEL_DELTA_WPARAM(wp) / 120.f * 60.f);
+        } else if (!g_locked && g_panel == PANEL_NONE && g_page == 1) {
+            // Side Screen: 2-finger trackpad drag or mouse wheel scrolls apps ANYWHERE on Page 1
             int d = GET_WHEEL_DELTA_WPARAM(wp);
             float scrollDelta = (float)d / 120.f * 140.f;
             g_appTargetScroll = Clamp(g_appTargetScroll - scrollDelta, 0.f, g_appMaxScroll);
-        } else if (!g_locked && g_panel == PANEL_NONE && g_page == 0 && PagerAreaHit(hit)) {
-            // Home Screen desktop: vertical wheel does NOT flip pages horizontally!
-            // Side scroll is strictly horizontal.
-        } else {
-            ScrollWindowAt(mx, my, (float)GET_WHEEL_DELTA_WPARAM(wp) / 120.f * 60.f);
         }
         InvalidateRect(h, nullptr, FALSE);
         return 0;
     }
     case WM_MOUSEHWHEEL: {                           // two-finger sideways swipe on a touchpad
         if (g_locked || g_panel != PANEL_NONE || g_ctxOpen || g_pdown) return 0;
-        const float T = 220.f;
+        const float T = 130.f;
         double now = NowSec();
         if (!g_hg) { g_hg = true; g_hlock = false; g_hacc = 0.f; g_hbase = g_page; }
         g_hlastT = now;
