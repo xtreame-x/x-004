@@ -24,17 +24,23 @@ A high-performance, hardware-accelerated desktop shell for Windows written in na
 - **Live Wallpaper Background Engine & MP4 Video Support**:
   - **Hardware-Accelerated MP4 Live Video Wallpaper Engine**: Seamlessly decode and loop any `.mp4`, `.mkv`, `.mov`, `.avi`, or `.wmv` video file directly as the desktop background using native **Windows Media Foundation** (`IMFSourceReader`). Background decoding worker runs on a dedicated thread with `MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING = TRUE`, streaming uncompressed 32-bit RGB frames directly into Direct2D hardware bitmaps (`DXGI_FORMAT_B8G8R8A8_UNORM`) via `CopyFromMemory` with zero UI frame drops.
   - **Infinite Seamless Looping**: End-of-stream detection automatically resets stream position back to start without stutter or black flashes.
-  - **3D Mouse Parallax & Accessibility Scrim**: Video wallpapers respect the interactive 3D mouse parallax depth offset and the real-time background dimming scrim slider (`H_WPDIM`), preserving perfect readability for cards, typography, and desk widgets.
+  - **Rock-Solid Static Alignment (No Parallax Shift)**: Clean, steady 1:1 screen fill without distracting cursor-following movement or unnecessary overscaling.
   - **Motion Awareness**: Pauses video frame decoding when "Reduce motion" is enabled in Quick Settings or Settings Preferences.
   - **Settings & File Dialog Integration**: Settings -> Appearance includes an enhanced file browser accepting both video and image files (`*.mp4`, `*.mov`, `*.jpg`, `*.png`, `*.webp`), plus a quick-load button `[ Load Sample MP4 (Tesla / New Year) ]` to instantly test local system MP4s (`tesla.mp4` / `NEW YEAR.mp4`). Automatically persisted to `shell.ini` under `custom_wp`.
   - **Procedural Floating Particle Embers**: 48 organic glowing embers and fireflies floating upward with sinusoidal sway, breathing alpha pulsation, and ambient emerald aura.
-  - **3D Mouse Parallax Depth**: Interactive subtle parallax shifting background layers based on mouse coordinates for 3D depth, with an on/off accessibility toggle.
   - **Quick Settings "Live Wallpaper" Tile**: 1-click toggle in the Quick Settings flyout to turn live particle motion on or pause it instantly.
   - **Wallpaper Background Contrast & Dimming Slider (Accessibility)**: Live 0% to 85% background scrim slider in Settings (`H_WPDIM`) allowing users to darken the wallpaper for crystal-clear widget and typography readability.
   - **Desktop Right-Click Quick Access**: Right-click context menu includes direct "Live wallpaper effects" toggle, custom wallpaper picker, and wallpaper cycler.
   - **Native WIC Decoder**: Integrates Windows Imaging Component (`IWICImagingFactory`) to load and aspect-fill any `.jpg`, `.jpeg`, `.png`, `.bmp`, or `.webp` image directly into Direct2D bitmaps (`ID2D1Bitmap`).
   - **Bundled Preset 0 (Misty Castle)**: Packaged atmospheric fantasy landscape (`wallpaper_glass.jpg`) paired with dark frosted glass cards.
-  - **Cross-Fade Transitions & Persistence**: Smooth animated cross-fades when changing wallpapers, automatically saved to `shell.ini` via `custom_wp`, `wp_dim`, `parallax`, and `motion`.
+  - **Cross-Fade Transitions & Persistence**: Smooth animated cross-fades when changing wallpapers, automatically saved to `shell.ini` via `custom_wp`, `wp_dim`, `rainmeter_date`, and `motion`.
+
+- **Rainmeter-Style Typographic Date & Day UI (Mond / Sonder Aesthetic)**:
+  - **Hero Tracked Day of Week**: Wide-tracked, high-contrast all-caps weekday (`M  O  N  D  A  Y`, `F  R  I  D  A  Y`) styled with luxury editorial letter spacing (`DayTracked()`) serving as a bold visual anchor.
+  - **Capsule Date Badge**: Minimalist frosted glass pill with glowing emerald indicator dot displaying uppercase date and month (`26  •  OCTOBER  2026`).
+  - **Digital Clock & Seconds Arc**: Bold, razor-sharp digital hours and minutes (`09:07`), 12H/24H and AM/PM badge tags, and a live 34-segment circular seconds progress ring.
+  - **System-Wide Harmony**: Unified across the desktop Clock Widget, Quick Settings flyout header, and the Lock Screen (`Win+L` / Lock tile).
+  - **Toggleable in Preferences**: Easily switch between **Rainmeter Date & Day UI** and **Classic Obsidian** in **Settings $\rightarrow$ Preferences** or `shell.ini` (`rainmeter_date=1`).
 
 - **Live Hardware & OS Telemetry**:
   - **Real Hardware Display Brightness & Master Audio Volume**: Direct hardware backlight control via Windows WMI (`WmiMonitorBrightnessMethods` / `WmiSetBrightness`) for laptop internal displays, with VESA DDC/CI (`highlevelmonitorconfigurationapi.h` / `dxva2.dll`) and GPU hardware gamma ramp (`SetDeviceGammaRamp`) fallbacks for external monitors. Integrates Windows Core Audio endpoint control (`IAudioEndpointVolume`) for physical system master volume. Runs in an asynchronous background hardware worker thread with atomic targets, ensuring 100+ fps slider dragging with zero UI lag, live percentage readouts, and release feedback toasts. Automatically synchronizes with live Windows brightness and volume levels on launch.

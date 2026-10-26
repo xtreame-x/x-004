@@ -546,7 +546,7 @@ static float g_widgetScale = 1.f;
 // General preferences surfaced in Settings.
 static bool  g_clock24 = false;                 // 12-hour clock by default
 static bool  g_motion = true;                   // wallpaper drift + waveform + live particles
-static bool  g_parallax = true;                 // 3D mouse parallax depth
+static bool  g_rainmeterDate = true;            // Rainmeter-style typographic Date & Day layout
 static float g_wpDim = 0.32f;                   // wallpaper background contrast / dimming (0..0.85)
 static float g_lastMouseX = 960.f, g_lastMouseY = 600.f;
 static int   g_setPage = 0;                     // Settings: 0 System, 1 Appearance, 2 Advanced
@@ -946,7 +946,7 @@ static void SaveSettings() {
     }
     WritePrivateProfileStringW(L"shell", L"clock24", g_clock24 ? L"1" : L"0", p.c_str());
     WritePrivateProfileStringW(L"shell", L"motion", g_motion ? L"1" : L"0", p.c_str());
-    WritePrivateProfileStringW(L"shell", L"parallax", g_parallax ? L"1" : L"0", p.c_str());
+    WritePrivateProfileStringW(L"shell", L"rainmeter_date", g_rainmeterDate ? L"1" : L"0", p.c_str());
     swprintf(num, 32, L"%d", (int)std::lround(g_wpDim * 100.f));
     WritePrivateProfileStringW(L"shell", L"wp_dim", num, p.c_str());
 }
@@ -984,7 +984,7 @@ static void LoadSettings() {
     }
     g_clock24 = GetPrivateProfileIntW(L"shell", L"clock24", 0, p.c_str()) != 0;
     g_motion  = GetPrivateProfileIntW(L"shell", L"motion", 1, p.c_str()) != 0;
-    g_parallax = GetPrivateProfileIntW(L"shell", L"parallax", 1, p.c_str()) != 0;
+    g_rainmeterDate = GetPrivateProfileIntW(L"shell", L"rainmeter_date", 1, p.c_str()) != 0;
     g_wpDim   = Clamp(GetPrivateProfileIntW(L"shell", L"wp_dim", 32, p.c_str()) / 100.f, 0.f, 0.85f);
     g_tog[TOG_LIVE_WP] = g_motion;
     g_togSub[TOG_LIVE_WP] = g_motion ? L"Particles & motion on" : L"Paused (reduced motion)";
@@ -1021,6 +1021,29 @@ static std::wstring DateShort() {
     SYSTEMTIME st; GetLocalTime(&st);
     int wd = st.wDayOfWeek % 7, mo = (st.wMonth >= 1 && st.wMonth <= 12) ? st.wMonth - 1 : 0;
     return std::wstring(WD[wd]) + L", " + std::to_wstring(st.wDay) + L" " + MO[mo];
+}
+
+// Rainmeter typography formatting (inspired by Mond, Sonder & Elegance suites)
+static std::wstring DayUpper() {
+    static const wchar_t* WD[7] = { L"SUNDAY", L"MONDAY", L"TUESDAY", L"WEDNESDAY", L"THURSDAY", L"FRIDAY", L"SATURDAY" };
+    SYSTEMTIME st; GetLocalTime(&st);
+    return WD[st.wDayOfWeek % 7];
+}
+static std::wstring DayTracked() {
+    std::wstring d = DayUpper();
+    std::wstring t;
+    for (size_t i = 0; i < d.size(); ++i) {
+        t += d[i];
+        if (i + 1 < d.size()) t += L"  ";
+    }
+    return t;
+}
+static std::wstring RainmeterDateUpper() {
+    static const wchar_t* MO[12] = { L"JANUARY", L"FEBRUARY", L"MARCH", L"APRIL", L"MAY", L"JUNE",
+                                     L"JULY", L"AUGUST", L"SEPTEMBER", L"OCTOBER", L"NOVEMBER", L"DECEMBER" };
+    SYSTEMTIME st; GetLocalTime(&st);
+    int mo = (st.wMonth >= 1 && st.wMonth <= 12) ? st.wMonth - 1 : 0;
+    return std::to_wstring(st.wDay) + L"  \u2022  " + MO[mo] + L"  " + std::to_wstring(st.wYear);
 }
 static std::wstring MediaTime(float sec) {
     int s = (int)sec; if (s < 0) s = 0;
@@ -1285,12 +1308,6 @@ static void DrawWallpaper() {
     g_br->SetColor(C(0x06080A));
     g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_br);
 
-    float parX = 0.f, parY = 0.f;
-    if (g_motion && g_parallax) {
-        parX = (g_lastMouseX - DW * 0.5f) * -0.016f;
-        parY = (g_lastMouseY - DH * 0.5f) * -0.016f;
-    }
-
     if (g_videoWpActive) {
         if (!g_videoBitmap || g_videoNewFrame.load()) {
             std::lock_guard<std::mutex> lk(g_videoLock);
@@ -1310,11 +1327,11 @@ static void DrawWallpaper() {
         }
 
         if (g_videoBitmap) {
-            float scale = std::max(DW / (float)g_videoW, DH / (float)g_videoH) * (g_parallax ? 1.04f : 1.0f);
+            float scale = std::max(DW / (float)g_videoW, DH / (float)g_videoH);
             float drawW = (float)g_videoW * scale;
             float drawH = (float)g_videoH * scale;
-            float drawX = (DW - drawW) * 0.5f + parX;
-            float drawY = (DH - drawH) * 0.5f + parY;
+            float drawX = (DW - drawW) * 0.5f;
+            float drawY = (DH - drawH) * 0.5f;
 
             g_rt->DrawBitmap(g_videoBitmap, R(drawX, drawY, drawW, drawH), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 
@@ -1326,18 +1343,18 @@ static void DrawWallpaper() {
     } else if (g_wpBitmap) {
         D2D1_SIZE_F sz = g_wpBitmap->GetSize();
         if (sz.width > 0.f && sz.height > 0.f) {
-            float scale = std::max(DW / sz.width, DH / sz.height) * (g_parallax ? 1.04f : 1.0f);
+            float scale = std::max(DW / sz.width, DH / sz.height);
             float drawW = sz.width * scale;
             float drawH = sz.height * scale;
-            float drawX = (DW - drawW) * 0.5f + parX;
-            float drawY = (DH - drawH) * 0.5f + parY;
+            float drawX = (DW - drawW) * 0.5f;
+            float drawY = (DH - drawH) * 0.5f;
 
             float opacity = g_wpFade.x;
             if (g_wpOldBitmap && opacity < 0.999f) {
                 D2D1_SIZE_F osz = g_wpOldBitmap->GetSize();
-                float oScale = std::max(DW / osz.width, DH / osz.height) * (g_parallax ? 1.04f : 1.0f);
+                float oScale = std::max(DW / osz.width, DH / osz.height);
                 float oW = osz.width * oScale, oH = osz.height * oScale;
-                g_rt->DrawBitmap(g_wpOldBitmap, R((DW - oW)*0.5f + parX, (DH - oH)*0.5f + parY, oW, oH), 1.0f - opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                g_rt->DrawBitmap(g_wpOldBitmap, R((DW - oW)*0.5f, (DH - oH)*0.5f, oW, oH), 1.0f - opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
             }
             g_rt->DrawBitmap(g_wpBitmap, R(drawX, drawY, drawW, drawH), opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 
@@ -1359,8 +1376,8 @@ static void DrawWallpaper() {
 
     if (g_glow) {
         float t = g_motion ? (float)g_clockT : 0.f;
-        g_glow->SetCenter(D2D1::Point2F(DW * 0.66f - g_pageA.x * 160.f + std::sin(t * 0.06f) * 90.f + parX * 0.8f,
-                                        DH * 0.16f + std::cos(t * 0.045f) * 46.f + parY * 0.8f));
+        g_glow->SetCenter(D2D1::Point2F(DW * 0.66f - g_pageA.x * 160.f + std::sin(t * 0.06f) * 90.f,
+                                        DH * 0.16f + std::cos(t * 0.045f) * 46.f));
         g_glow->SetOpacity(g_wpBitmap ? 0.32f : 0.55f);
         g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_glow);
         g_glow->SetOpacity(1.f);
@@ -1463,25 +1480,71 @@ static void RingButton(float cx, float cy, float r, int id, wchar_t glyph, float
 // ----------------------------------------------------------------------------
 static void DrawClockCard(float x, float y, float w, float h) {
     Card(x, y, w, h, 24.f, 0.78f);
-    Label(L"LOCAL TIME", x + 28.f, y + 22.f, w - 56.f);
-    Txt(TimeHM(), x + 26.f, y + 44.f, w - 140.f, 88.f, F_SEMI, 62.f, 600, COL_T100, 0, 1.f);
-    Txt(DateLong(), x + 28.f, y + 132.f, w - 56.f, 28.f, F_UI, 14.f, 400, COL_T50, 0, 1.f);
 
-    // seconds ring
-    SYSTEMTIME st; GetLocalTime(&st);
-    float cx = x + w - 66.f, cy = y + h * 0.5f;
-    Ring(cx, cy, 27.f, C(WHITE, 0.07f), 3.f);
-    float a0 = -1.5707963f;
-    float a1 = a0 + 6.2831853f * ((float)st.wSecond / 60.f);
-    const int seg = 34;
-    for (int i = 0; i < seg; ++i) {
-        float t0 = a0 + (a1 - a0) * (float)i / seg;
-        float t1 = a0 + (a1 - a0) * (float)(i + 1) / seg;
-        Line(cx + std::cos(t0) * 27.f, cy + std::sin(t0) * 27.f,
-             cx + std::cos(t1) * 27.f, cy + std::sin(t1) * 27.f, C(COL_T100, 0.85f), 3.f);
+    if (g_rainmeterDate) {
+        // ====================================================================
+        //  Rainmeter Date & Day Typography Layout (Mond / Sonder Aesthetic)
+        // ====================================================================
+        SYSTEMTIME st; GetLocalTime(&st);
+
+        // 1. Hero Tracked Day of Week (e.g. "M  O  N  D  A  Y")
+        Txt(DayTracked(), x + 28.f, y + 20.f, w - 100.f, 24.f, F_SEMI, 14.f, 700, COL_T100, 0, 1.f);
+
+        // 2. Minimalist AM/PM or 24H Capsule Tag
+        std::wstring tag = g_clock24 ? L"24H" : (st.wHour >= 12 ? L"PM" : L"AM");
+        Fill(x + w - 74.f, y + 20.f, 46.f, 20.f, 10.f, C(WHITE, 0.06f));
+        Stroke(x + w - 74.f, y + 20.f, 46.f, 20.f, 10.f, C(WHITE, 0.12f));
+        Txt(tag.c_str(), x + w - 74.f, y + 22.f, 46.f, 16.f, F_SEMI, 10.f, 600, COL_ACC, 1, 1.f);
+
+        // 3. Hairline accent separator
+        Line(x + 28.f, y + 48.f, x + w - 28.f, y + 48.f, C(WHITE, 0.07f), 1.f);
+
+        // 4. Large Digital Time
+        Txt(TimeHM(), x + 24.f, y + 54.f, w - 140.f, 76.f, F_SEMI, 58.f, 600, COL_T100, 0, 1.f);
+
+        // 5. Rainmeter Seconds Progress Ring
+        float cx = x + w - 66.f, cy = y + 104.f;
+        Ring(cx, cy, 27.f, C(WHITE, 0.07f), 3.f);
+        float a0 = -1.5707963f;
+        float a1 = a0 + 6.2831853f * ((float)st.wSecond / 60.f);
+        const int seg = 34;
+        for (int i = 0; i < seg; ++i) {
+            float t0 = a0 + (a1 - a0) * (float)i / seg;
+            float t1 = a0 + (a1 - a0) * (float)(i + 1) / seg;
+            Line(cx + std::cos(t0) * 27.f, cy + std::sin(t0) * 27.f,
+                 cx + std::cos(t1) * 27.f, cy + std::sin(t1) * 27.f, C(COL_ACC, 0.95f), 3.f);
+        }
+        Disc(cx, cy, 3.f, C(COL_ACC, 0.95f));
+        Txt(Pad2(st.wSecond), cx - 20.f, cy + 32.f, 40.f, 18.f, F_MONO, 11.f, 400, COL_T50, 1, 0.9f);
+
+        // 6. Rainmeter Date Capsule Badge (e.g. "26  •  OCTOBER  2026")
+        float bw = w - 150.f, bh = 30.f, by = y + 144.f;
+        Fill(x + 28.f, by, bw, bh, 15.f, C(WHITE, 0.045f));
+        Stroke(x + 28.f, by, bw, bh, 15.f, C(WHITE, 0.09f), 1.f);
+        Disc(x + 42.f, by + 15.f, 3.5f, C(COL_ACC, 0.95f));
+        Txt(RainmeterDateUpper(), x + 52.f, by + 7.f, bw - 60.f, 18.f, F_SEMI, 11.5f, 600, COL_T90, 0, 1.f);
+    } else {
+        // Classic layout
+        Label(L"LOCAL TIME", x + 28.f, y + 22.f, w - 56.f);
+        Txt(TimeHM(), x + 26.f, y + 44.f, w - 140.f, 88.f, F_SEMI, 62.f, 600, COL_T100, 0, 1.f);
+        Txt(DateLong(), x + 28.f, y + 132.f, w - 56.f, 28.f, F_UI, 14.f, 400, COL_T50, 0, 1.f);
+
+        // seconds ring
+        SYSTEMTIME st; GetLocalTime(&st);
+        float cx = x + w - 66.f, cy = y + h * 0.5f;
+        Ring(cx, cy, 27.f, C(WHITE, 0.07f), 3.f);
+        float a0 = -1.5707963f;
+        float a1 = a0 + 6.2831853f * ((float)st.wSecond / 60.f);
+        const int seg = 34;
+        for (int i = 0; i < seg; ++i) {
+            float t0 = a0 + (a1 - a0) * (float)i / seg;
+            float t1 = a0 + (a1 - a0) * (float)(i + 1) / seg;
+            Line(cx + std::cos(t0) * 27.f, cy + std::sin(t0) * 27.f,
+                 cx + std::cos(t1) * 27.f, cy + std::sin(t1) * 27.f, C(COL_T100, 0.85f), 3.f);
+        }
+        Disc(cx, cy, 3.f, C(COL_T100, 0.9f));
+        Txt(Pad2(st.wSecond), cx - 20.f, cy + 32.f, 40.f, 18.f, F_MONO, 11.f, 400, COL_T50, 1, 0.9f);
     }
-    Disc(cx, cy, 3.f, C(COL_T100, 0.9f));
-    Txt(Pad2(st.wSecond), cx - 20.f, cy + 32.f, 40.f, 18.f, F_MONO, 11.f, 400, COL_T50, 1, 0.9f);
 }
 
 // ----------------------------------------------------------------------------
@@ -1828,7 +1891,8 @@ static void DrawSystemBubble(float a) {
     Stroke(x, y, w, h, 28.f, C(WHITE, 0.07f));
 
     // ---- header
-    Txt(DateLong(), x + 26.f, y + 18.f, w - 120.f, 22.f, F_UI, 12.f, 500, COL_T50, 0, 1.f);
+    std::wstring topDate = g_rainmeterDate ? (DayUpper() + L",  " + RainmeterDateUpper()) : DateLong();
+    Txt(topDate, x + 26.f, y + 18.f, w - 120.f, 22.f, F_SEMI, 11.5f, 600, COL_T70, 0, 1.f);
     Txt(TimeHM(), x + 24.f, y + 38.f, 240.f, 54.f, F_SEMI, 38.f, 600, COL_T100, 0, 1.f);
     Disc(x + w - 62.f, y + 40.f, 17.f, C(WHITE, 0.05f));
     Glyph(g_weatherGlyph, x + w - 62.f, y + 40.f, 15.f, COL_T90);
@@ -2092,9 +2156,15 @@ static void DrawLockScreen(float a) {
         g_glow->SetOpacity(1.f);
     }
 
-    float cy = DH * 0.28f;
-    Txt(TimeHM(), 0.f, cy, DW, 130.f, F_SEMI, 108.f, 600, COL_T100, 1, 0.98f * e);
-    Txt(DateLong(), 0.f, cy + 128.f, DW, 36.f, F_UI, 18.f, 400, COL_T70, 1, e);
+    float cy = DH * 0.25f;
+    if (g_rainmeterDate) {
+        Txt(DayTracked(), 0.f, cy, DW, 36.f, F_SEMI, 20.f, 700, COL_T80, 1, e);
+        Txt(TimeHM(), 0.f, cy + 32.f, DW, 130.f, F_SEMI, 108.f, 600, COL_T100, 1, 0.98f * e);
+        Txt(RainmeterDateUpper(), 0.f, cy + 164.f, DW, 36.f, F_UI, 16.f, 500, COL_T70, 1, e);
+    } else {
+        Txt(TimeHM(), 0.f, cy, DW, 130.f, F_SEMI, 108.f, 600, COL_T100, 1, 0.98f * e);
+        Txt(DateLong(), 0.f, cy + 128.f, DW, 36.f, F_UI, 18.f, 400, COL_T70, 1, e);
+    }
 
     Disc(DW * 0.5f, cy + 246.f, 44.f, C(WHITE, 0.07f * e));
     Ring(DW * 0.5f, cy + 246.f, 44.f, C(WHITE, 0.14f * e), 1.f);
@@ -2269,7 +2339,7 @@ static void ResetAppearance() {
     for (int i = 0; i < shelllayout::W_COUNT; ++i) g_widgetOn[i] = true;
     g_clock24 = false;
     g_motion = true;
-    g_parallax = true;
+    g_rainmeterDate = true;
     g_wpDim = 0.32f;
     g_tog[TOG_LIVE_WP] = true;
     g_togSub[TOG_LIVE_WP] = L"Particles & motion on";
@@ -2376,7 +2446,7 @@ static void SettingsContent(float x, float y, float w, float h) {
                     g_hover == H_SET_MISC + 0);
         SettingsRow(lx, ly + 36.f, half, L"Reduce motion", !g_motion, H_SET_MISC + 1,
                     g_hover == H_SET_MISC + 1);
-        SettingsRow(lx, ly + 72.f, half, L"3D Mouse Parallax", g_parallax, H_SET_MISC + 2,
+        SettingsRow(lx, ly + 72.f, half, L"Rainmeter Date & Day UI", g_rainmeterDate, H_SET_MISC + 2,
                     g_hover == H_SET_MISC + 2);
         ly += 114.f;
         Txt(L"WALLPAPER ACCESSIBILITY CONTRAST", lx, ly, half, 18.f, F_UI, 10.f, 600, COL_T35, 0, 1.f);
@@ -3653,9 +3723,9 @@ static void HandleClick(int id, float mx, float my) {
         return;
     }
     if (id == H_SET_MISC + 2) {
-        g_parallax = !g_parallax;
+        g_rainmeterDate = !g_rainmeterDate;
         SaveSettings();
-        ShowToast(g_parallax ? L"Parallax depth on" : L"Parallax depth off", (wchar_t)0xE790);
+        ShowToast(g_rainmeterDate ? L"Rainmeter Date UI on" : L"Classic Date UI on", (wchar_t)0xE787);
         return;
     }
     if (id == H_SET_RESET) {
