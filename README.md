@@ -35,10 +35,11 @@ A high-performance, hardware-accelerated desktop shell for Windows written in na
   - **Bundled Preset 0 (Misty Castle)**: Packaged atmospheric fantasy landscape (`wallpaper_glass.jpg`) paired with dark frosted glass cards.
   - **Cross-Fade Transitions & Persistence**: Smooth animated cross-fades when changing wallpapers, automatically saved to `shell.ini` via `custom_wp`, `wp_dim`, `rainmeter_date`, and `motion`.
 
-- **Rainmeter-Style Typographic Date & Day UI (Mond / Sonder Aesthetic)**:
-  - **Hero Tracked Day of Week**: Wide-tracked, high-contrast all-caps weekday (`M  O  N  D  A  Y`, `F  R  I  D  A  Y`) styled with luxury editorial letter spacing (`DayTracked()`) serving as a bold visual anchor.
+- **Rainmeter-Style Typographic Date & Day UI (Mond / Anurati Aesthetic)**:
+  - **Authentic Anurati Stencil Font**: Renders the prominent weekday (`MONDAY`, `TUESDAY`) and the large digital time (`10:22`) using the signature futuristic geometric stencil font **Anurati** (`Anurati.ttf`), bundled directly with the shell and dynamically registered with DirectWrite.
+  - **Hero Day of Week**: Clean, razor-sharp Anurati uppercase weekday serving as the primary visual anchor above an ambient hairline divider.
   - **Capsule Date Badge**: Minimalist frosted glass pill with glowing emerald indicator dot displaying uppercase date and month (`26  •  OCTOBER  2026`).
-  - **Digital Clock & Seconds Arc**: Bold, razor-sharp digital hours and minutes (`09:07`), 12H/24H and AM/PM badge tags, and a live 34-segment circular seconds progress ring.
+  - **Digital Clock & Seconds Arc**: Bold Anurati numerals for hours and minutes, paired with 12H/24H and AM/PM badge tags, and a live 34-segment circular seconds progress ring.
   - **System-Wide Harmony**: Unified across the desktop Clock Widget, Quick Settings flyout header, and the Lock Screen (`Win+L` / Lock tile).
   - **Toggleable in Preferences**: Easily switch between **Rainmeter Date & Day UI** and **Classic Obsidian** in **Settings $\rightarrow$ Preferences** or `shell.ini` (`rainmeter_date=1`).
 

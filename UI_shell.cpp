@@ -240,6 +240,45 @@ static const wchar_t* F_UI   = L"Segoe UI";
 static const wchar_t* F_SEMI = L"Segoe UI Semibold";
 static const wchar_t* F_MONO = L"Consolas";
 static const wchar_t* F_ICON = L"Segoe MDL2 Assets";
+static const wchar_t* F_ANURATI = L"Anurati Cooler";
+
+static void InitAnuratiFont() {
+    wchar_t localApp[MAX_PATH] = { 0 };
+    if (GetEnvironmentVariableW(L"LOCALAPPDATA", localApp, MAX_PATH) > 0) {
+        std::wstring fontDir = std::wstring(localApp) + L"\\Microsoft\\Windows\\Fonts";
+        CreateDirectoryW(fontDir.c_str(), nullptr);
+        std::wstring dest = fontDir + L"\\Anurati.ttf";
+        if (GetFileAttributesW(dest.c_str()) == INVALID_FILE_ATTRIBUTES) {
+            if (GetFileAttributesW(L"Anurati.ttf") != INVALID_FILE_ATTRIBUTES) {
+                CopyFileW(L"Anurati.ttf", dest.c_str(), FALSE);
+            }
+        }
+        HKEY hKey = nullptr;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows NT\\CurrentVersion\\Fonts", 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
+            RegSetValueExW(hKey, L"Anurati (TrueType)", 0, REG_SZ, (const BYTE*)dest.c_str(), (DWORD)((dest.size() + 1) * sizeof(wchar_t)));
+            RegCloseKey(hKey);
+        }
+        AddFontResourceExW(dest.c_str(), FR_PRIVATE, NULL);
+    }
+    AddFontResourceExW(L"Anurati.ttf", FR_PRIVATE, NULL);
+
+    if (g_dw) {
+        IDWriteFontCollection* col = nullptr;
+        if (SUCCEEDED(g_dw->GetSystemFontCollection(&col, TRUE)) && col) {
+            UINT32 idx = 0; BOOL exists = FALSE;
+            if (SUCCEEDED(col->FindFamilyName(L"Anurati Cooler", &idx, &exists)) && exists) {
+                F_ANURATI = L"Anurati Cooler";
+            } else if (SUCCEEDED(col->FindFamilyName(L"Anurati", &idx, &exists)) && exists) {
+                F_ANURATI = L"Anurati";
+            } else if (SUCCEEDED(col->FindFamilyName(L"Anurati-Regular", &idx, &exists)) && exists) {
+                F_ANURATI = L"Anurati-Regular";
+            } else {
+                F_ANURATI = F_SEMI;
+            }
+            col->Release();
+        }
+    }
+}
 
 // align: 0 = leading, 1 = center, 2 = trailing
 // Interface text size in percent. Only text smaller than 20 design px is scaled
@@ -1487,8 +1526,8 @@ static void DrawClockCard(float x, float y, float w, float h) {
         // ====================================================================
         SYSTEMTIME st; GetLocalTime(&st);
 
-        // 1. Hero Tracked Day of Week (e.g. "M  O  N  D  A  Y")
-        Txt(DayTracked(), x + 28.f, y + 20.f, w - 100.f, 24.f, F_SEMI, 14.f, 700, COL_T100, 0, 1.f);
+        // 1. Hero Day of Week in Anurati Font (e.g. "MONDAY")
+        Txt(DayUpper(), x + 28.f, y + 18.f, w - 100.f, 26.f, F_ANURATI, 17.f, 400, COL_T100, 0, 1.f);
 
         // 2. Minimalist AM/PM or 24H Capsule Tag
         std::wstring tag = g_clock24 ? L"24H" : (st.wHour >= 12 ? L"PM" : L"AM");
@@ -1499,8 +1538,8 @@ static void DrawClockCard(float x, float y, float w, float h) {
         // 3. Hairline accent separator
         Line(x + 28.f, y + 48.f, x + w - 28.f, y + 48.f, C(WHITE, 0.07f), 1.f);
 
-        // 4. Large Digital Time
-        Txt(TimeHM(), x + 24.f, y + 54.f, w - 140.f, 76.f, F_SEMI, 58.f, 600, COL_T100, 0, 1.f);
+        // 4. Large Digital Time in Anurati Font (e.g. "10:17")
+        Txt(TimeHM(), x + 24.f, y + 54.f, w - 140.f, 76.f, F_ANURATI, 56.f, 400, COL_T100, 0, 1.f);
 
         // 5. Rainmeter Seconds Progress Ring
         float cx = x + w - 66.f, cy = y + 104.f;
@@ -1893,7 +1932,7 @@ static void DrawSystemBubble(float a) {
     // ---- header
     std::wstring topDate = g_rainmeterDate ? (DayUpper() + L",  " + RainmeterDateUpper()) : DateLong();
     Txt(topDate, x + 26.f, y + 18.f, w - 120.f, 22.f, F_SEMI, 11.5f, 600, COL_T70, 0, 1.f);
-    Txt(TimeHM(), x + 24.f, y + 38.f, 240.f, 54.f, F_SEMI, 38.f, 600, COL_T100, 0, 1.f);
+    Txt(TimeHM(), x + 24.f, y + 38.f, 240.f, 54.f, F_ANURATI, 34.f, 400, COL_T100, 0, 1.f);
     Disc(x + w - 62.f, y + 40.f, 17.f, C(WHITE, 0.05f));
     Glyph(g_weatherGlyph, x + w - 62.f, y + 40.f, 15.f, COL_T90);
     Txt(g_weatherTempStr.c_str(), x + w - 132.f, y + 26.f, 44.f, 26.f, F_SEMI, 14.f, 600, COL_T90, 2, 1.f);
@@ -2158,9 +2197,9 @@ static void DrawLockScreen(float a) {
 
     float cy = DH * 0.25f;
     if (g_rainmeterDate) {
-        Txt(DayTracked(), 0.f, cy, DW, 36.f, F_SEMI, 20.f, 700, COL_T80, 1, e);
-        Txt(TimeHM(), 0.f, cy + 32.f, DW, 130.f, F_SEMI, 108.f, 600, COL_T100, 1, 0.98f * e);
-        Txt(RainmeterDateUpper(), 0.f, cy + 164.f, DW, 36.f, F_UI, 16.f, 500, COL_T70, 1, e);
+        Txt(DayUpper(), 0.f, cy, DW, 40.f, F_ANURATI, 24.f, 400, COL_T80, 1, e);
+        Txt(TimeHM(), 0.f, cy + 36.f, DW, 130.f, F_ANURATI, 96.f, 400, COL_T100, 1, 0.98f * e);
+        Txt(RainmeterDateUpper(), 0.f, cy + 172.f, DW, 36.f, F_UI, 16.f, 500, COL_T70, 1, e);
     } else {
         Txt(TimeHM(), 0.f, cy, DW, 130.f, F_SEMI, 108.f, 600, COL_T100, 1, 0.98f * e);
         Txt(DateLong(), 0.f, cy + 128.f, DW, 36.f, F_UI, 18.f, 400, COL_T70, 1, e);
@@ -4546,6 +4585,7 @@ int WINAPI WinMain(HINSTANCE hi, HINSTANCE, LPSTR, int nShow) {
     if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
                                    (IUnknown**)&g_dw)))
         return 1;
+    InitAnuratiFont();
 
     g_clockT = NowSec();
     g_lastT = g_clockT;
