@@ -545,6 +545,14 @@ static float      g_pdx0 = 0.f, g_pdy0 = 0.f;   // press point (design space)
 static float      g_pstartPos = 0.f;            // g_pageA.x at press
 static float      g_pageDX = 0.f;               // x offset of the page being drawn
 
+// Side Screen (All Apps) down-scroll physics state (smooth-scrollbar momentum)
+static float g_appScroll = 0.f;
+static float g_appTargetScroll = 0.f;
+static float g_appMaxScroll = 0.f;
+static bool  g_appVDrag = false;
+static float g_appDragStartY = 0.f;
+static float g_appDragStartScroll = 0.f;
+
 // Two-finger touchpad swipe (WM_MOUSEHWHEEL).
 static const float HSWIPE_DIR = 1.f;
 static bool       g_hg = false;
@@ -601,11 +609,7 @@ enum {
     H_UNLOCK = 850, H_FILE = 870,            // + row
     H_DESK = 900,
     H_HAPP = 1000,                           // + index (home-screen app tiles)
-    H_HDOT = 1050,                           // + page  (home page dots)
-    H_DASH_NAV = 1100,                       // + index (workspace navigation)
-    H_DASH_SHORTCUT = 1120,                  // + index (quick app badges)
-    H_DASH_TAB = 1140,                       // + index (crypto tabs)
-    H_DASH_ACT = 1160                        // + index (activity bubbles)
+    H_HDOT = 1200                            // + page  (home page dots)
 };
 enum { WP_BODY = 0, WP_TITLE = 1, WP_CLOSE = 2, WP_MIN = 3, WP_MAX = 4,
        WP_RIGHT = 5, WP_BOTTOM = 6, WP_CORNER = 7 };
@@ -645,11 +649,14 @@ struct AppDef {
 };
 // glyph == 0 → draw `mono` in Consolas instead of an MDL2 glyph.
 static const AppDef APPS[] = {
+    // Core Desktop System Windows
     { L"Files",       0xE8B7, nullptr, APP_FILES,    L"explorer.exe",                nullptr },
     { L"Terminal",    0,      L">_",   APP_TERM,     L"wt.exe",                      L"powershell.exe" },
     { L"Settings",    0xE713, nullptr, APP_SETTINGS, L"ms-settings:",               nullptr },
     { L"Text Editor", 0xE70F, nullptr, APP_EDITOR,   L"notepad.exe",                 nullptr },
     { L"About",       0xE946, nullptr, APP_ABOUT,    nullptr,                        nullptr },
+
+    // Primary Productivity & Media
     { L"Chrome",      0xE774, nullptr, -1,           L"chrome.exe",                  L"https://www.google.com" },
     { L"Gmail",       0xE715, nullptr, -1,           L"https://mail.google.com",     L"mailto:" },
     { L"Calendar",    0xE787, nullptr, -1,           L"outlookcal:",                 L"https://calendar.google.com" },
@@ -669,6 +676,32 @@ static const AppDef APPS[] = {
     { L"Tasks",       0xE9D5, nullptr, -1,           L"ms-todo:",                    L"https://tasks.google.com" },
     { L"Files Pro",   0xE8B7, nullptr, -1,           L"explorer.exe shell:Personal", L"explorer.exe" },
     { L"Help",        0xE897, nullptr, -1,           L"ms-contact-support:",         L"https://support.microsoft.com/windows" },
+
+    // Expanded Real Windows Tools, Utilities & Workspaces (All Apps with Down-Scroll)
+    { L"Task Manager",0xE950, nullptr, -1,           L"taskmgr.exe",                 nullptr },
+    { L"Snipping Tool",0xE7C8,nullptr, -1,           L"ms-screenclip:",              L"snippingtool.exe" },
+    { L"Paint",       0xE790, nullptr, -1,           L"mspaint.exe",                 nullptr },
+    { L"Edge",        0xE777, nullptr, -1,           L"msedge.exe",                  L"https://www.bing.com" },
+    { L"VS Code",     0,      L"{ }",  -1,           L"code.cmd",                    L"code.exe" },
+    { L"Command Prompt",0,    L"cmd",  -1,           L"cmd.exe",                     L"powershell.exe" },
+    { L"Control Panel",0xE771,nullptr, -1,           L"control.exe",                 nullptr },
+    { L"Device Manager",0xE7F8,nullptr,-1,           L"devmgmt.msc",                 nullptr },
+    { L"Disk Manager",0xEDA2, nullptr, -1,           L"diskmgmt.msc",                nullptr },
+    { L"Res Monitor", 0xE9E9, nullptr, -1,           L"resmon.exe",                  nullptr },
+    { L"System Info", 0xE7BA, nullptr, -1,           L"msinfo32.exe",                nullptr },
+    { L"Registry",    0xE7AC, nullptr, -1,           L"regedit.exe",                 nullptr },
+    { L"Disk Cleanup",0xE74D, nullptr, -1,           L"cleanmgr.exe",                nullptr },
+    { L"Sound Recorder",0xE720,nullptr,-1,           L"soundrecorder:",              nullptr },
+    { L"Media Player",0xE768, nullptr, -1,           L"wmplayer.exe",                L"mswindowsmusic:" },
+    { L"Sheets",      0,      L"[=]",  -1,           L"https://sheets.google.com",   nullptr },
+    { L"Discord",     0xE714, nullptr, -1,           L"discord:",                    L"https://discord.com/app" },
+    { L"GitHub",      0,      L"git",  -1,           L"https://github.com",          nullptr },
+    { L"YouTube",     0xE714, nullptr, -1,           L"https://www.youtube.com",     nullptr },
+    { L"Reddit",      0xE789, nullptr, -1,           L"https://www.reddit.com",      nullptr },
+    { L"Wikipedia",   0,      L"W",    -1,           L"https://www.wikipedia.org",   nullptr },
+    { L"Char Map",    0xE890, nullptr, -1,           L"charmap.exe",                 nullptr },
+    { L"Magnifier",   0xE721, nullptr, -1,           L"magnify.exe",                 nullptr },
+    { L"Power Plan",  0xE7E8, nullptr, -1,           L"powercfg.cpl",                nullptr },
 };
 static const int APP_N = (int)(sizeof(APPS) / sizeof(APPS[0]));
 
@@ -2650,6 +2683,15 @@ static void UpdateAnimations(float dt) {
         }
     }
 
+    // smooth-scrollbar momentum damping for side screen (all apps) down scroll
+    float appDiff = g_appTargetScroll - g_appScroll;
+    if (std::fabs(appDiff) > 0.05f) {
+        float dampingRate = 20.0f;
+        g_appScroll += appDiff * (1.f - std::exp(-dampingRate * dt));
+    } else {
+        g_appScroll = g_appTargetScroll;
+    }
+
     // Reduce motion: panels arrive fully open instead of sliding, and the
     // wallpaper cross-fade collapses to a cut.
     if (!g_motion) {
@@ -2751,20 +2793,44 @@ static void HomeAppTap(int i) {
 
 static void DrawHomeApps() {
     const int cols = 6;
-    const float cellW = 240.f, cellH = 222.f;
-    const float x0 = (DW - (float)cols * cellW) * 0.5f, y0 = 150.f;
-    Txt(L"Apps", x0, 76.f, 300.f, 30.f, F_SEMI, 16.f, 600, COL_T90, 0, 1.f);
-    Txt(std::to_wstring(APP_N) + L" installed", x0 + (float)cols * cellW - 300.f, 76.f, 300.f, 30.f,
-        F_UI, 12.f, 400, COL_T35, 2, 1.f);
+    const float cellW = 240.f, cellH = 176.f;
+    const float x0 = (DW - (float)cols * cellW) * 0.5f, y0 = 146.f;
+    const float clipTop = 136.f, clipH = 924.f;
+
+    int rows = (APP_N + cols - 1) / cols;
+    float totalH = (float)rows * cellH + 30.f;
+    g_appMaxScroll = std::max(0.f, totalH - clipH);
+
+    // Fixed Top Header above the scrolling viewport
+    Txt(L"All Applications", x0, 72.f, 340.f, 32.f, F_SEMI, 20.f, 600, COL_T100, 0, 1.f);
+    Txt(std::to_wstring(APP_N) + L" installed \u2022 Scroll down for full library",
+        x0, 104.f, 440.f, 22.f, F_UI, 12.f, 400, COL_T50, 0, 1.f);
+
+    // Viewport Clipping for Smooth Down-Scroll
+    g_rt->PushAxisAlignedClip(R(x0 - 24.f, clipTop, (float)cols * cellW + 48.f, clipH), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
     for (int i = 0; i < APP_N; ++i) {
         float cx = x0 + (float)(i % cols) * cellW + cellW * 0.5f;
-        float cy = y0 + (float)(i / cols) * cellH + 64.f;
-        bool hov = (g_hover == H_HAPP + i) && !g_pdrag;
-        if (hov) Fill(cx - 100.f, cy - 72.f, 200.f, 190.f, 24.f, C(WHITE, 0.05f));
-        AppIcon(APPS[i], cx, cy, 96.f, 38.f, hov);
-        Txt(APPS[i].name, cx - 100.f, cy + 60.f, 200.f, 30.f, F_UI, 13.f, 500,
-            hov ? COL_T100 : COL_T70, 1, 1.f);
-        AddHit(cx - 100.f, cy - 72.f, 200.f, 190.f, H_HAPP + i);
+        float cy = y0 + (float)(i / cols) * cellH - g_appScroll + 70.f;
+        if (cy + 96.f < clipTop || cy - 96.f > clipTop + clipH) continue;
+        bool hov = (g_hover == H_HAPP + i) && !g_pdrag && !g_appVDrag;
+        if (hov) Fill(cx - 96.f, cy - 64.f, 192.f, 156.f, 20.f, C(WHITE, 0.055f));
+        AppIcon(APPS[i], cx, cy - 14.f, 84.f, 32.f, hov);
+        Txt(APPS[i].name, cx - 96.f, cy + 42.f, 192.f, 24.f, F_UI, 12.5f, 500,
+            hov ? COL_T100 : COL_T80, 1, 1.f);
+        AddHit(cx - 96.f, cy - 64.f, 192.f, 156.f, H_HAPP + i);
+    }
+
+    g_rt->PopAxisAlignedClip();
+
+    // Sleek frosted glass vertical scrollbar indicator
+    if (g_appMaxScroll > 4.f) {
+        float trackX = x0 + (float)cols * cellW + 24.f;
+        float trackY = 146.f, trackH = 900.f;
+        float thumbH = std::max(56.f, trackH * (clipH / (clipH + g_appMaxScroll)));
+        float thumbY = trackY + (trackH - thumbH) * (g_appScroll / g_appMaxScroll);
+        Fill(trackX, trackY, 5.f, trackH, 2.5f, C(WHITE, 0.05f));
+        Fill(trackX, thumbY, 5.f, thumbH, 2.5f, C(WHITE, 0.32f));
     }
 }
 
@@ -3336,9 +3402,23 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             double now = NowSec();
             g_tracker.Add(mx, now);
             float dx = mx - g_pdx0, dy = my - g_pdy0;
-            if (!g_pdrag && std::fabs(dx) > 11.f && std::fabs(dx) > std::fabs(dy)) {
-                g_pdrag = true;                  // horizontal intent: this is a swipe, not a tap
-                g_hover = H_NONE;
+            if (!g_pdrag && !g_appVDrag) {
+                if (g_page == 1 && std::fabs(dy) > 10.f && std::fabs(dy) > std::fabs(dx) * 1.15f) {
+                    g_appVDrag = true;
+                    g_appDragStartY = my;
+                    g_appDragStartScroll = g_appTargetScroll;
+                    g_hover = H_NONE;
+                } else if (std::fabs(dx) > 11.f && std::fabs(dx) > std::fabs(dy)) {
+                    g_pdrag = true;                  // horizontal intent: this is a swipe, not a tap
+                    g_hover = H_NONE;
+                }
+            }
+            if (g_appVDrag) {
+                float newScroll = Clamp(g_appDragStartScroll - (my - g_appDragStartY), 0.f, g_appMaxScroll);
+                g_appTargetScroll = newScroll;
+                g_appScroll = newScroll;
+                InvalidateRect(h, nullptr, FALSE);
+                return 0;
             }
             if (g_pdrag) {
                 // Rock-solid 1:1 finger tracking during active drag (no lookahead jitter)
@@ -3457,6 +3537,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         g_dragWin = -1;
         g_dragPart = 0;
         g_dragSlider = -1;
+        g_appVDrag = false;
         if (g_pdown) {                           // capture stolen mid-swipe: just settle
             bool was = g_pdrag;
             g_pdown = false;
@@ -3469,10 +3550,12 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             float mx, my;
             ToDesign(lp, mx, my);
             const bool wasDrag = g_pdrag;
+            const bool wasVDrag = g_appVDrag;
             const int did = g_pdid;
             double now = NowSec();
             g_pdown = false;
             g_pdrag = false;
+            g_appVDrag = false;
             ReleaseCapture();
             if (wasDrag) {
                 float v = g_tracker.GetVelocity(now);
@@ -3492,7 +3575,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                 // Seamless glide: transfer release velocity directly into the 2nd-order spring
                 float releaseVel = Clamp(-v / DW, -7.0f, 7.0f);
                 GoPage(target, releaseVel);
-            } else {
+            } else if (!wasVDrag) {
                 if (HitTest(mx, my) == did) {
                     if (did >= H_HAPP && did < H_HAPP + APP_N) HomeAppTap(did - H_HAPP);
                     else if (did != H_DESK) HandleClick(did, mx, my);
@@ -3531,10 +3614,22 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             static double lastWheel = 0.0;           // one page per wheel flick
             double now = NowSec();
             int d = GET_WHEEL_DELTA_WPARAM(wp);
-            if (d != 0 && now - lastWheel > 0.22) {
-                float v = (d < 0 ? 3.2f : -3.2f);
-                GoPage(g_page + (d < 0 ? 1 : -1), v);
-                lastWheel = now;
+            if (g_page == 1) {
+                // Side Screen: ALL APPS down scroll with smooth-scrollbar momentum damping
+                float scrollDelta = (float)d / 120.f * 130.f;
+                if (g_appTargetScroll <= 8.f && d > 0 && (now - lastWheel > 0.22)) {
+                    // At the top and scrolling up: flick back to Page 0
+                    GoPage(0, -3.2f);
+                    lastWheel = now;
+                } else {
+                    g_appTargetScroll = Clamp(g_appTargetScroll - scrollDelta, 0.f, g_appMaxScroll);
+                }
+            } else {
+                if (d != 0 && now - lastWheel > 0.22) {
+                    float v = (d < 0 ? 3.2f : -3.2f);
+                    GoPage(g_page + (d < 0 ? 1 : -1), v);
+                    lastWheel = now;
+                }
             }
         } else {
             ScrollWindowAt(mx, my, (float)GET_WHEEL_DELTA_WPARAM(wp) / 120.f * 60.f);
@@ -3651,7 +3746,7 @@ static_assert(H_CTX + 16 <= H_UNLOCK, "context menu overlaps the unlock region")
 static_assert(H_UNLOCK < H_FILE, "unlock region overlaps file rows");
 static_assert(H_FILE + FILE_N + 4 <= H_DESK, "file rows overlap the desktop");
 static_assert(H_DESK < H_HAPP && H_HAPP + APP_N <= H_HDOT, "home app tiles overlap other ids");
-static_assert(H_HDOT + HOME_PAGES <= 1100, "home page dots overlap other ids");
+static_assert(H_HDOT + HOME_PAGES <= 1300, "home page dots overlap other ids");
 
 // ----------------------------------------------------------------------------
 //  Entry point
