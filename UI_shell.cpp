@@ -472,12 +472,12 @@ static std::vector<Note> g_notes;
 // ----------------------------------------------------------------------------
 //  Shell state
 // ----------------------------------------------------------------------------
-enum { TOG_WIFI, TOG_BT, TOG_DND, TOG_NIGHT, TOG_SHARE, TOG_SAVER, TOG_COUNT };
+enum { TOG_WIFI, TOG_BT, TOG_DND, TOG_NIGHT, TOG_LIVE_WP, TOG_SAVER, TOG_COUNT };
 static bool  g_tog[TOG_COUNT] = { true, false, false, false, true, false };
 static const wchar_t* TOG_NAME[TOG_COUNT] = { L"Wi-Fi", L"Bluetooth", L"Do not disturb",
-                                              L"Night light", L"Nearby share", L"Battery saver" };
+                                              L"Night light", L"Live Wallpaper", L"Battery saver" };
 static std::wstring   g_togSub[TOG_COUNT] = { L"Scanning...", L"Off", L"Muted alerts",
-                                              L"Warm tint", L"Visible to contacts", L"Until 08:00" };
+                                              L"Warm tint", L"Particles & motion on", L"Until 08:00" };
 
 // Live Wi-Fi & Bluetooth variables
 static std::wstring g_wifiSSID = L"Wi-Fi";
@@ -506,7 +506,7 @@ static std::mutex   g_weatherLock;
 static std::atomic<bool> g_netRunning(true);
 static std::thread       g_netThread;
 static const wchar_t  TOG_GLYPH[TOG_COUNT] = { (wchar_t)0xE701, (wchar_t)0xE702, (wchar_t)0xE708,
-                                               (wchar_t)0xE706, (wchar_t)0xE703, (wchar_t)0xE83F };
+                                               (wchar_t)0xE706, (wchar_t)0xE790, (wchar_t)0xE83F };
 
 static float g_vol = 0.72f, g_bri = 0.85f;
 static bool  g_playing = true;
@@ -537,7 +537,10 @@ static float g_widgetScale = 1.f;
 
 // General preferences surfaced in Settings.
 static bool  g_clock24 = false;                 // 12-hour clock by default
-static bool  g_motion = true;                   // wallpaper drift + waveform
+static bool  g_motion = true;                   // wallpaper drift + waveform + live particles
+static bool  g_parallax = true;                 // 3D mouse parallax depth
+static float g_wpDim = 0.32f;                   // wallpaper background contrast / dimming (0..0.85)
+static float g_lastMouseX = 960.f, g_lastMouseY = 600.f;
 static int   g_setPage = 0;                     // Settings: 0 System, 1 Appearance, 2 Advanced
 
 enum { PANEL_NONE = 0, PANEL_SYS, PANEL_LAUNCH };
@@ -606,7 +609,7 @@ enum {
     H_NONE = 0,
     H_TRAY = 10, H_CLOCK, H_DND, H_SHELF_BG,
     H_TOG0 = 20,                             // + TOG_COUNT
-    H_VOL = 40, H_BRI, H_LOCK, H_SETTINGS, H_POWER,
+    H_VOL = 40, H_BRI, H_LOCK, H_SETTINGS, H_POWER, H_WPDIM,
     H_NOTIF = 60,                            // + 100*i body, +50+i dismiss
     H_NOTE = 300,                            // + index
     H_ADDNOTE = 320,
@@ -783,6 +786,9 @@ static void SaveSettings() {
     }
     WritePrivateProfileStringW(L"shell", L"clock24", g_clock24 ? L"1" : L"0", p.c_str());
     WritePrivateProfileStringW(L"shell", L"motion", g_motion ? L"1" : L"0", p.c_str());
+    WritePrivateProfileStringW(L"shell", L"parallax", g_parallax ? L"1" : L"0", p.c_str());
+    swprintf(num, 32, L"%d", (int)std::lround(g_wpDim * 100.f));
+    WritePrivateProfileStringW(L"shell", L"wp_dim", num, p.c_str());
 }
 
 static void LoadSettings() {
@@ -815,6 +821,10 @@ static void LoadSettings() {
     }
     g_clock24 = GetPrivateProfileIntW(L"shell", L"clock24", 0, p.c_str()) != 0;
     g_motion  = GetPrivateProfileIntW(L"shell", L"motion", 1, p.c_str()) != 0;
+    g_parallax = GetPrivateProfileIntW(L"shell", L"parallax", 1, p.c_str()) != 0;
+    g_wpDim   = Clamp(GetPrivateProfileIntW(L"shell", L"wp_dim", 32, p.c_str()) / 100.f, 0.f, 0.85f);
+    g_tog[TOG_LIVE_WP] = g_motion;
+    g_togSub[TOG_LIVE_WP] = g_motion ? L"Particles & motion on" : L"Paused (reduced motion)";
 }
 
 // ----------------------------------------------------------------------------
@@ -1039,31 +1049,88 @@ static void PromptCustomWallpaper(HWND hwnd) {
     }
 }
 
+struct WpParticle {
+    float x, y;
+    float vy;
+    float size;
+    float alpha;
+    float phase;
+    float speed;
+};
+static const int WP_PARTICLE_COUNT = 48;
+static WpParticle g_wpParticles[WP_PARTICLE_COUNT];
+static bool g_wpParticlesInited = false;
+
+static void InitLiveParticles() {
+    for (int i = 0; i < WP_PARTICLE_COUNT; ++i) {
+        g_wpParticles[i].x = (float)((i * 73) % (int)DW) + 20.f;
+        g_wpParticles[i].y = (float)((i * 47) % (int)DH) + 20.f;
+        g_wpParticles[i].vy = -12.f - (float)(i % 7) * 3.f;
+        g_wpParticles[i].size = 2.2f + (float)(i % 5) * 0.8f;
+        g_wpParticles[i].alpha = 0.22f + (float)(i % 6) * 0.08f;
+        g_wpParticles[i].phase = (float)i * 0.55f;
+        g_wpParticles[i].speed = 0.8f + (float)(i % 4) * 0.35f;
+    }
+    g_wpParticlesInited = true;
+}
+
+static void DrawLiveWallpaperParticles() {
+    if (!g_wpParticlesInited) InitLiveParticles();
+    float t = (float)g_clockT;
+
+    for (int i = 0; i < WP_PARTICLE_COUNT; ++i) {
+        WpParticle& p = g_wpParticles[i];
+        p.y += p.vy * g_dt;
+        float sway = std::sin(p.phase + t * p.speed) * 16.f * g_dt;
+        p.x += sway;
+
+        if (p.y < -30.f) {
+            p.y = DH + 20.f;
+            p.x = std::fmod((float)(i * 97 + (int)(t * 60)), DW);
+        }
+
+        float pulse = 0.65f + 0.35f * std::sin(p.phase * 2.f + t * 1.6f);
+        float a = Clamp(p.alpha * pulse, 0.05f, 0.90f);
+
+        // Soft outer ambient aura glow (emerald accent)
+        Disc(p.x, p.y, p.size * 2.5f, C(COL_ACTIVE, a * 0.25f));
+        // Soft white core
+        Disc(p.x, p.y, p.size, C(WHITE, a * 0.80f));
+    }
+}
+
 static void DrawWallpaper() {
     // Base deep dark canvas
     g_br->SetColor(C(0x06080A));
     g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_br);
 
+    float parX = 0.f, parY = 0.f;
+    if (g_motion && g_parallax) {
+        parX = (g_lastMouseX - DW * 0.5f) * -0.016f;
+        parY = (g_lastMouseY - DH * 0.5f) * -0.016f;
+    }
+
     if (g_wpBitmap) {
         D2D1_SIZE_F sz = g_wpBitmap->GetSize();
         if (sz.width > 0.f && sz.height > 0.f) {
-            float scale = std::max(DW / sz.width, DH / sz.height);
+            float scale = std::max(DW / sz.width, DH / sz.height) * (g_parallax ? 1.04f : 1.0f);
             float drawW = sz.width * scale;
             float drawH = sz.height * scale;
-            float drawX = (DW - drawW) * 0.5f;
-            float drawY = (DH - drawH) * 0.5f;
+            float drawX = (DW - drawW) * 0.5f + parX;
+            float drawY = (DH - drawH) * 0.5f + parY;
 
             float opacity = g_wpFade.x;
             if (g_wpOldBitmap && opacity < 0.999f) {
                 D2D1_SIZE_F osz = g_wpOldBitmap->GetSize();
-                float oScale = std::max(DW / osz.width, DH / osz.height);
+                float oScale = std::max(DW / osz.width, DH / osz.height) * (g_parallax ? 1.04f : 1.0f);
                 float oW = osz.width * oScale, oH = osz.height * oScale;
-                g_rt->DrawBitmap(g_wpOldBitmap, R((DW - oW)*0.5f, (DH - oH)*0.5f, oW, oH), 1.0f - opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                g_rt->DrawBitmap(g_wpOldBitmap, R((DW - oW)*0.5f + parX, (DH - oH)*0.5f + parY, oW, oH), 1.0f - opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
             }
             g_rt->DrawBitmap(g_wpBitmap, R(drawX, drawY, drawW, drawH), opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 
-            // Dark ambient atmospheric scrim for high contrast and text readability
-            g_br->SetColor(C(0x06080C, 0.32f));
+            // Dark ambient atmospheric scrim for high contrast and text readability (accessibility)
+            float scrimAlpha = Clamp(g_wpDim, 0.05f, 0.85f);
+            g_br->SetColor(C(0x06080C, scrimAlpha));
             g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_br);
         }
     } else {
@@ -1079,11 +1146,16 @@ static void DrawWallpaper() {
 
     if (g_glow) {
         float t = g_motion ? (float)g_clockT : 0.f;
-        g_glow->SetCenter(D2D1::Point2F(DW * 0.66f - g_pageA.x * 160.f + std::sin(t * 0.06f) * 90.f,
-                                        DH * 0.16f + std::cos(t * 0.045f) * 46.f));
+        g_glow->SetCenter(D2D1::Point2F(DW * 0.66f - g_pageA.x * 160.f + std::sin(t * 0.06f) * 90.f + parX * 0.8f,
+                                        DH * 0.16f + std::cos(t * 0.045f) * 46.f + parY * 0.8f));
         g_glow->SetOpacity(g_wpBitmap ? 0.32f : 0.55f);
         g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_glow);
         g_glow->SetOpacity(1.f);
+    }
+
+    // Live Atmospheric Wallpaper Particle Embers
+    if (g_motion) {
+        DrawLiveWallpaperParticles();
     }
 
     // Faint horizontal hairlines give the wallpaper glass texture
@@ -1721,10 +1793,11 @@ static void DrawLauncher(float a) {
 //  Desktop context menu
 // ----------------------------------------------------------------------------
 struct CtxItem { const wchar_t* label; const wchar_t* key; wchar_t glyph; int cmd; };
-enum { CTX_WALL = 0, CTX_CUSTOM_WALL, CTX_PERS, CTX_LAUNCH, CTX_SYS, CTX_FULL, CTX_LOCK, CTX_QUIT, CTX_N };
+enum { CTX_WALL = 0, CTX_CUSTOM_WALL, CTX_LIVE_WP, CTX_PERS, CTX_LAUNCH, CTX_SYS, CTX_FULL, CTX_LOCK, CTX_QUIT, CTX_N };
 static const CtxItem CTX[CTX_N] = {
     { L"Choose wallpaper\u2026", L"",        (wchar_t)0xE8B9, CTX_CUSTOM_WALL },
     { L"Next wallpaper",         L"",        (wchar_t)0xE790, CTX_WALL        },
+    { L"Live wallpaper effects", L"",        (wchar_t)0xE790, CTX_LIVE_WP     },
     { L"Personalise\u2026",       L"",        (wchar_t)0xE713, CTX_PERS        },
     { L"Open launcher",          L"Super",   (wchar_t)0xE700, CTX_LAUNCH      },
     { L"System menu",            L"",        (wchar_t)0xE713, CTX_SYS         },
@@ -1983,6 +2056,10 @@ static void ResetAppearance() {
     for (int i = 0; i < shelllayout::W_COUNT; ++i) g_widgetOn[i] = true;
     g_clock24 = false;
     g_motion = true;
+    g_parallax = true;
+    g_wpDim = 0.32f;
+    g_tog[TOG_LIVE_WP] = true;
+    g_togSub[TOG_LIVE_WP] = L"Particles & motion on";
     if (g_wp == 0) { SafeRelease(g_wpA); BuildWallpaperBrushes(); }
     else SetWallpaper(0);
     SaveSettings();
@@ -2017,9 +2094,9 @@ static void SettingsContent(float x, float y, float w, float h) {
         Txt(L"Connectivity, notifications and output levels.", cx, ry + 28.f, cw, 20.f,
             F_UI, 11.f, 400, COL_T35, 0, 1.f);
 
-        static const int rows[] = { TOG_WIFI, TOG_BT, TOG_DND, TOG_NIGHT, TOG_SAVER };
+        static const int rows[] = { TOG_WIFI, TOG_BT, TOG_DND, TOG_NIGHT, TOG_LIVE_WP, TOG_SAVER };
         float ty = ry + 60.f;
-        for (int i = 0; i < 5; ++i) {
+        for (int i = 0; i < 6; ++i) {
             int t = rows[i];
             bool on = g_tog[t];
             bool hov = (g_hover == H_TOG0 + t);
@@ -2078,6 +2155,12 @@ static void SettingsContent(float x, float y, float w, float h) {
                     g_hover == H_SET_MISC + 0);
         SettingsRow(lx, ly + 36.f, half, L"Reduce motion", !g_motion, H_SET_MISC + 1,
                     g_hover == H_SET_MISC + 1);
+        SettingsRow(lx, ly + 72.f, half, L"3D Mouse Parallax", g_parallax, H_SET_MISC + 2,
+                    g_hover == H_SET_MISC + 2);
+        ly += 114.f;
+        Txt(L"WALLPAPER ACCESSIBILITY CONTRAST", lx, ly, half, 18.f, F_UI, 10.f, 600, COL_T35, 0, 1.f);
+        SliderDraw(lx, ly + 22.f, half - 52.f, g_wpDim / 0.85f, H_WPDIM, 7.f);
+        Txt(std::to_wstring((int)std::lround(g_wpDim / 0.85f * 100.f)) + L"%", lx + half - 48.f, ly + 26.f, 48.f, 20.f, F_UI, 11.f, 400, COL_T50, 2, 1.f);
 
         Txt(L"DESKTOP WIDGETS", rx, ry, half, 18.f, F_UI, 10.f, 600, COL_T35, 0, 1.f);
         Txt(L"Shown", rx + half - 60.f, ry, 60.f, 18.f, F_UI, 10.f, 400, COL_T35, 2, 1.f);
@@ -2351,6 +2434,13 @@ static void RunContextCommand(int cmd) {
     switch (cmd) {
     case CTX_CUSTOM_WALL: PromptCustomWallpaper(g_hwnd); break;
     case CTX_WALL:        SetWallpaper(g_wp + 1); break;
+    case CTX_LIVE_WP:
+        g_motion = !g_motion;
+        g_tog[TOG_LIVE_WP] = g_motion;
+        g_togSub[TOG_LIVE_WP] = g_motion ? L"Particles & motion on" : L"Paused (reduced motion)";
+        ShowToast(g_motion ? L"Live Wallpaper on" : L"Live Wallpaper paused", (wchar_t)0xE790);
+        SaveSettings();
+        break;
     case CTX_PERS:   g_setPage = 1; OpenApp(APP_SETTINGS); break;
     case CTX_LAUNCH: g_panel = PANEL_LAUNCH; break;
     case CTX_SYS:    g_panel = PANEL_SYS; break;
@@ -3232,9 +3322,11 @@ static void ApplySliderValue(int which, float mx) {
     } else if (which == 1) {
         g_bri = v;
         g_targetSysBri.store((int)std::lround(v * 100.f));
-    } else {
+    } else if (which == 2) {
         g_pos = v * g_dur;
         g_playing = true;
+    } else if (which == 3) {
+        g_wpDim = Clamp(v * 0.85f, 0.f, 0.85f);
     }
 }
 
@@ -3270,6 +3362,14 @@ static void HandleClick(int id, float mx, float my) {
     // --- system bubble -------------------------------------------------------
     if (id >= H_TOG0 && id < H_TOG0 + TOG_COUNT) {
         int t = id - H_TOG0;
+        if (t == TOG_LIVE_WP) {
+            g_motion = !g_motion;
+            g_tog[TOG_LIVE_WP] = g_motion;
+            g_togSub[TOG_LIVE_WP] = g_motion ? L"Particles & motion on" : L"Paused (reduced motion)";
+            ShowToast(g_motion ? L"Live Wallpaper on" : L"Live Wallpaper paused", (wchar_t)0xE790);
+            SaveSettings();
+            return;
+        }
         g_tog[t] = !g_tog[t];
         ShowToast(std::wstring(TOG_NAME[t]) + (g_tog[t] ? L" on" : L" off"), TOG_GLYPH[t]);
         SaveSettings();
@@ -3314,8 +3414,16 @@ static void HandleClick(int id, float mx, float my) {
     }
     if (id == H_SET_MISC + 1) {
         g_motion = !g_motion;
+        g_tog[TOG_LIVE_WP] = g_motion;
+        g_togSub[TOG_LIVE_WP] = g_motion ? L"Particles & motion on" : L"Paused (reduced motion)";
         SaveSettings();
         ShowToast(g_motion ? L"Animations on" : L"Animations reduced", (wchar_t)0xE769);
+        return;
+    }
+    if (id == H_SET_MISC + 2) {
+        g_parallax = !g_parallax;
+        SaveSettings();
+        ShowToast(g_parallax ? L"Parallax depth on" : L"Parallax depth off", (wchar_t)0xE790);
         return;
     }
     if (id == H_SET_RESET) {
@@ -3663,6 +3771,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_MOUSEMOVE: {
         float mx, my;
         ToDesign(lp, mx, my);
+        g_lastMouseX = mx;
+        g_lastMouseY = my;
         if (g_dragSlider >= 0) {
             ApplySliderValue(g_dragSlider, mx);
             InvalidateRect(h, nullptr, FALSE);
@@ -3792,8 +3902,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
-        if (id == H_VOL || id == H_BRI || id == H_SEEK) {
-            g_dragSlider = (id == H_VOL) ? 0 : (id == H_BRI ? 1 : 2);
+        if (id == H_VOL || id == H_BRI || id == H_SEEK || id == H_WPDIM) {
+            g_dragSlider = (id == H_VOL) ? 0 : (id == H_BRI ? 1 : (id == H_SEEK ? 2 : 3));
             SetCapture(h);
             BeginSlider(g_dragSlider, id, mx, my);
             InvalidateRect(h, nullptr, FALSE);
@@ -3942,6 +4052,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                 ShowToast(L"Brightness " + std::to_wstring((int)std::lround(g_bri * 100.f)) + L"%", (wchar_t)0xE706);
             } else if (g_dragSlider == 0) {
                 ShowToast(L"Volume " + std::to_wstring((int)std::lround(g_vol * 100.f)) + L"%", (wchar_t)0xE767);
+            } else if (g_dragSlider == 3) {
+                ShowToast(L"Wallpaper Dimming " + std::to_wstring((int)std::lround(g_wpDim / 0.85f * 100.f)) + L"%", (wchar_t)0xE790);
             }
             g_dragSlider = -1;
             ReleaseCapture();
@@ -4101,7 +4213,7 @@ static_assert(H_SET_NAV + 3 <= H_SET_WP, "settings tabs overlap the wallpaper sw
 static_assert(H_SET_WP + WP_COUNT <= H_SET_SIZE, "wallpaper swatches overlap the size buttons");
 static_assert(H_SET_SIZE + 3 <= H_SET_WIDGET, "size buttons overlap the widget list");
 static_assert(H_SET_WIDGET + shelllayout::W_COUNT <= H_SET_MISC, "widget list overlaps preferences");
-static_assert(H_SET_MISC + 2 <= H_SET_RESET, "preferences overlap the reset button");
+static_assert(H_SET_MISC + 3 <= H_SET_RESET, "preferences overlap the reset button");
 static_assert(H_SET_RESET < H_CTX, "settings ids overlap the context menu");
 static_assert(H_CTX + 16 <= H_UNLOCK, "context menu overlaps the unlock region");
 static_assert(H_UNLOCK < H_FILE, "unlock region overlaps file rows");

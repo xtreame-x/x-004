@@ -21,12 +21,15 @@ A high-performance, hardware-accelerated desktop shell for Windows written in na
   - **Predictive Target Projection**: Fling target projection $x_{\text{projected}} = x_0 + \frac{v_0}{1 - d}$ for intuitive page snapping.
   - **Bounded Rubber-Band Boundaries**: Hyperbolic overscroll resistance preventing harsh clamp stops at edges.
 
-- **Custom Wallpaper Engine & Preset Gallery**:
+- **Live Wallpaper Background Engine & Accessibility**:
+  - **Procedural Floating Particle Embers**: 48 organic glowing embers and fireflies floating upward with sinusoidal sway, breathing alpha pulsation, and ambient emerald aura.
+  - **3D Mouse Parallax Depth**: Interactive subtle parallax shifting background layers based on mouse coordinates for 3D depth, with an on/off accessibility toggle.
+  - **Quick Settings "Live Wallpaper" Tile**: 1-click toggle in the Quick Settings flyout to turn live particle motion on or pause it instantly.
+  - **Wallpaper Background Contrast & Dimming Slider (Accessibility)**: Live 0% to 85% background scrim slider in Settings (`H_WPDIM`) allowing users to darken the wallpaper for crystal-clear widget and typography readability.
+  - **Desktop Right-Click Quick Access**: Right-click context menu includes direct "Live wallpaper effects" toggle, custom wallpaper picker, and wallpaper cycler.
   - **Native WIC Decoder**: Integrates Windows Imaging Component (`IWICImagingFactory`) to load and aspect-fill any `.jpg`, `.jpeg`, `.png`, `.bmp`, or `.webp` image directly into Direct2D bitmaps (`ID2D1Bitmap`).
   - **Bundled Preset 0 (Misty Castle)**: Packaged atmospheric fantasy landscape (`wallpaper_glass.jpg`) paired with dark frosted glass cards.
-  - **Custom Image File Picker**: Select any custom image from disk via the native Windows Open File dialog (`GetOpenFileNameW`) in **Settings -> Appearance** or via the desktop context menu.
-  - **Desktop Right-Click Context Menu**: Right-click anywhere on the empty desktop canvas to quickly select "Choose wallpaper...", "Open Settings", or toggle fullscreen.
-  - **Cross-Fade Transitions & Persistence**: Smooth animated cross-fades when changing wallpapers, automatically saved to `shell.ini` via `custom_wp` and `wallpaper`.
+  - **Cross-Fade Transitions & Persistence**: Smooth animated cross-fades when changing wallpapers, automatically saved to `shell.ini` via `custom_wp`, `wp_dim`, `parallax`, and `motion`.
 
 - **Live Hardware & OS Telemetry**:
   - **Real Hardware Display Brightness & Master Audio Volume**: Direct hardware backlight control via Windows WMI (`WmiMonitorBrightnessMethods` / `WmiSetBrightness`) for laptop internal displays, with VESA DDC/CI (`highlevelmonitorconfigurationapi.h` / `dxva2.dll`) and GPU hardware gamma ramp (`SetDeviceGammaRamp`) fallbacks for external monitors. Integrates Windows Core Audio endpoint control (`IAudioEndpointVolume`) for physical system master volume. Runs in an asynchronous background hardware worker thread with atomic targets, ensuring 100+ fps slider dragging with zero UI lag, live percentage readouts, and release feedback toasts. Automatically synchronizes with live Windows brightness and volume levels on launch.
