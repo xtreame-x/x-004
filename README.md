@@ -29,6 +29,7 @@ A high-performance, hardware-accelerated desktop shell for Windows written in na
   - **Cross-Fade Transitions & Persistence**: Smooth animated cross-fades when changing wallpapers, automatically saved to `shell.ini` via `custom_wp` and `wallpaper`.
 
 - **Live Hardware & OS Telemetry**:
+  - **Real Hardware Display Brightness & Master Audio Volume**: Direct hardware backlight control via Windows WMI (`WmiMonitorBrightnessMethods` / `WmiSetBrightness`) for laptop internal displays, with VESA DDC/CI (`highlevelmonitorconfigurationapi.h` / `dxva2.dll`) and GPU hardware gamma ramp (`SetDeviceGammaRamp`) fallbacks for external monitors. Integrates Windows Core Audio endpoint control (`IAudioEndpointVolume`) for physical system master volume. Runs in an asynchronous background hardware worker thread with atomic targets, ensuring 100+ fps slider dragging with zero UI lag, live percentage readouts, and release feedback toasts. Automatically synchronizes with live Windows brightness and volume levels on launch.
   - **Native Wi-Fi**: Directly calls Windows WLAN API (`wlanapi.h`) to detect the active SSID and actual Wi-Fi signal quality percentage.
   - **Native Bluetooth**: Queries Windows Bluetooth API (`bluetoothapis.h`) for radio state and paired/connected devices.
   - **System Metrics**: Real-time CPU load sampling via `GetSystemTimes`, RAM utilization via `GlobalMemoryStatusEx`, root disk free space, and system uptime.
@@ -72,7 +73,7 @@ Or run `g++` directly:
 ```bash
 g++ -std=c++17 -O2 -s -mwindows -static UI_shell.cpp -o UI_shell.exe \
     -ld2d1 -ldwrite -luser32 -lgdi32 -lwinhttp -lwlanapi -lbthprops \
-    -lshell32 -lwinmm -lole32 -lwindowscodecs -lcomdlg32
+    -lshell32 -lwinmm -lole32 -loleaut32 -lwbemuuid -ldxva2 -lwindowscodecs -lcomdlg32
 ```
 
 ### Running

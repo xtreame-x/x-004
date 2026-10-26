@@ -76,6 +76,11 @@
 #include <mmsystem.h>
 #include <wincodec.h>
 #include <commdlg.h>
+#include <wbemidl.h>
+#include <mmdeviceapi.h>
+#include <endpointvolume.h>
+#include <highlevelmonitorconfigurationapi.h>
+#include <physicalmonitorenumerationapi.h>
 
 #include "shell_layout.h"
 
@@ -92,6 +97,9 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "comdlg32.lib")
+#pragma comment(lib, "wbemuuid.lib")
+#pragma comment(lib, "oleaut32.lib")
+#pragma comment(lib, "dxva2.lib")
 #endif
 
 // ----------------------------------------------------------------------------
@@ -502,6 +510,12 @@ static const wchar_t  TOG_GLYPH[TOG_COUNT] = { (wchar_t)0xE701, (wchar_t)0xE702,
 
 static float g_vol = 0.72f, g_bri = 0.85f;
 static bool  g_playing = true;
+
+// Hardware system control state (physical display brightness & master audio volume)
+static std::atomic<int>   g_targetSysBri(-1);
+static std::atomic<float> g_targetSysVol(-1.f);
+static std::thread        g_sysHardwareThread;
+static std::atomic<bool>  g_sysHardwareRunning(true);
 
 // Live machine data, sampled from the OS once a second (see SampleSystem).
 static int          g_battPct = 78;
@@ -1546,13 +1560,16 @@ static void DrawSystemBubble(float a) {
         ToggleTile(tx, ty, tw, th, i);
     }
 
-    // ---- sliders
+    // ---- sliders with live percentage readouts
     float sy = y + 118.f + 3.f * (th + gap) + 6.f;
     Glyph((wchar_t)(g_vol <= 0.001f ? 0xE74F : 0xE767), x + pad + 12.f, sy + 16.f, 12.f, COL_T50);
-    SliderDraw(x + pad + 32.f, sy, w - pad * 2.f - 32.f, g_vol, H_VOL);
+    SliderDraw(x + pad + 32.f, sy, w - pad * 2.f - 76.f, g_vol, H_VOL);
+    Txt(std::to_wstring((int)std::lround(g_vol * 100.f)) + L"%", x + w - pad - 38.f, sy + 6.f, 38.f, 20.f, F_UI, 11.f, 400, COL_T50, 2, 1.f);
+
     float by = sy + 40.f;
     Glyph((wchar_t)0xE706, x + pad + 12.f, by + 16.f, 12.f, COL_T50);
-    SliderDraw(x + pad + 32.f, by, w - pad * 2.f - 32.f, g_bri, H_BRI);
+    SliderDraw(x + pad + 32.f, by, w - pad * 2.f - 76.f, g_bri, H_BRI);
+    Txt(std::to_wstring((int)std::lround(g_bri * 100.f)) + L"%", x + w - pad - 38.f, by + 6.f, 38.f, 20.f, F_UI, 11.f, 400, COL_T50, 2, 1.f);
 
     // ---- notifications
     float ny = by + 40.f;
@@ -2017,9 +2034,12 @@ static void SettingsContent(float x, float y, float w, float h) {
         }
         Line(cx - 4.f, ty + 8.f, cx + cw + 4.f, ty + 8.f, C(WHITE, 0.055f));
         Txt(L"Volume", cx, ty + 22.f, 90.f, 22.f, F_UI, 11.5f, 500, COL_T50, 0, 1.f);
-        SliderDraw(cx + 80.f, ty + 16.f, cw - 96.f, g_vol, H_VOL, 7.f);
+        SliderDraw(cx + 80.f, ty + 16.f, cw - 142.f, g_vol, H_VOL, 7.f);
+        Txt(std::to_wstring((int)std::lround(g_vol * 100.f)) + L"%", cx + cw - 48.f, ty + 20.f, 48.f, 20.f, F_UI, 11.f, 400, COL_T50, 2, 1.f);
+
         Txt(L"Brightness", cx, ty + 58.f, 90.f, 22.f, F_UI, 11.5f, 500, COL_T50, 0, 1.f);
-        SliderDraw(cx + 80.f, ty + 52.f, cw - 96.f, g_bri, H_BRI, 7.f);
+        SliderDraw(cx + 80.f, ty + 52.f, cw - 142.f, g_bri, H_BRI, 7.f);
+        Txt(std::to_wstring((int)std::lround(g_bri * 100.f)) + L"%", cx + cw - 48.f, ty + 56.f, 48.f, 20.f, F_UI, 11.f, 400, COL_T50, 2, 1.f);
         Txt(L"These toggles are shell state, not device control.", cx, ty + 92.f, cw, 20.f,
             F_UI, 10.f, 400, COL_T35, 0, 1.f);
     } else if (g_setPage == 1) {
@@ -2608,6 +2628,206 @@ static void NetWorkerThread() {
 //  Real machine data: battery, CPU load, memory, disk, uptime, Wi-Fi, Bluetooth. Pure
 //  Win32 (no WMI, no extra libraries); CPU load is a delta of GetSystemTimes.
 // ----------------------------------------------------------------------------
+//  Hardware System Controls: Real Display Brightness (WMI + DDC/CI + Gamma) & Volume
+// ----------------------------------------------------------------------------
+static bool ApplyWmiBrightness(int percent) {
+    IWbemLocator* pLoc = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_WbemLocator, 0, CLSCTX_INPROC_SERVER, IID_IWbemLocator, (LPVOID*)&pLoc);
+    if (FAILED(hr)) return false;
+    IWbemServices* pSvc = nullptr;
+    BSTR bstrNamespace = SysAllocString(L"ROOT\\WMI");
+    hr = pLoc->ConnectServer(bstrNamespace, nullptr, nullptr, 0, 0, 0, 0, &pSvc);
+    SysFreeString(bstrNamespace);
+    pLoc->Release();
+    if (FAILED(hr)) return false;
+
+    CoSetProxyBlanket(pSvc, RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE, nullptr,
+                       RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE, nullptr, EOAC_NONE);
+
+    BSTR bstrClass = SysAllocString(L"WmiMonitorBrightnessMethods");
+    IEnumWbemClassObject* pEnum = nullptr;
+    hr = pSvc->CreateInstanceEnum(bstrClass, WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY, nullptr, &pEnum);
+    SysFreeString(bstrClass);
+
+    bool ok = false;
+    if (SUCCEEDED(hr) && pEnum) {
+        IWbemClassObject* pObj = nullptr;
+        ULONG uRet = 0;
+        if (pEnum->Next(WBEM_INFINITE, 1, &pObj, &uRet) == S_OK && uRet > 0) {
+            VARIANT vtRelPath;
+            VariantInit(&vtRelPath);
+            if (SUCCEEDED(pObj->Get(L"__RELPATH", 0, &vtRelPath, 0, 0))) {
+                IWbemClassObject* pClass = nullptr;
+                BSTR bstrMethodClass = SysAllocString(L"WmiMonitorBrightnessMethods");
+                if (SUCCEEDED(pSvc->GetObject(bstrMethodClass, 0, nullptr, &pClass, nullptr))) {
+                    IWbemClassObject* pInDef = nullptr;
+                    if (SUCCEEDED(pClass->GetMethod(L"WmiSetBrightness", 0, &pInDef, nullptr)) && pInDef) {
+                        IWbemClassObject* pIn = nullptr;
+                        pInDef->SpawnInstance(0, &pIn);
+
+                        VARIANT vTimeout, vBright;
+                        vTimeout.vt = VT_I4; vTimeout.lVal = 0;
+                        vBright.vt = VT_UI1; vBright.bVal = (BYTE)Clamp(percent, 0, 100);
+                        pIn->Put(L"Timeout", 0, &vTimeout, 0);
+                        pIn->Put(L"Brightness", 0, &vBright, 0);
+
+                        IWbemClassObject* pOut = nullptr;
+                        BSTR mName = SysAllocString(L"WmiSetBrightness");
+                        hr = pSvc->ExecMethod(vtRelPath.bstrVal, mName, 0, nullptr, pIn, &pOut, nullptr);
+                        SysFreeString(mName);
+                        if (SUCCEEDED(hr)) ok = true;
+
+                        if (pOut) pOut->Release();
+                        pIn->Release();
+                        pInDef->Release();
+                    }
+                    pClass->Release();
+                }
+                SysFreeString(bstrMethodClass);
+                VariantClear(&vtRelPath);
+            }
+            pObj->Release();
+        }
+        pEnum->Release();
+    }
+    pSvc->Release();
+    return ok;
+}
+
+static bool ApplyDdcBrightness(int percent) {
+    HMONITOR hMon = MonitorFromWindow(GetDesktopWindow(), MONITOR_DEFAULTTOPRIMARY);
+    DWORD numMon = 0;
+    if (!GetNumberOfPhysicalMonitorsFromHMONITOR(hMon, &numMon) || numMon == 0) return false;
+    std::vector<PHYSICAL_MONITOR> mons(numMon);
+    if (!GetPhysicalMonitorsFromHMONITOR(hMon, numMon, mons.data())) return false;
+    bool ok = false;
+    for (DWORD i = 0; i < numMon; ++i) {
+        if (SetMonitorBrightness(mons[i].hPhysicalMonitor, (DWORD)Clamp(percent, 0, 100))) {
+            ok = true;
+        }
+    }
+    DestroyPhysicalMonitors(numMon, mons.data());
+    return ok;
+}
+
+static void ApplyGammaBrightness(float bri) {
+    HDC hdc = GetDC(NULL);
+    if (!hdc) return;
+    WORD ramp[3][256];
+    float b = Clamp(bri, 0.10f, 1.0f);
+    for (int i = 0; i < 256; ++i) {
+        WORD val = (WORD)Clamp((float)(i * 256) * b, 0.f, 65535.f);
+        ramp[0][i] = val;
+        ramp[1][i] = val;
+        ramp[2][i] = val;
+    }
+    SetDeviceGammaRamp(hdc, ramp);
+    ReleaseDC(NULL, hdc);
+}
+
+static bool ApplySystemVolume(float vol) {
+    IMMDeviceEnumerator* pEnum = nullptr;
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_INPROC_SERVER,
+                                __uuidof(IMMDeviceEnumerator), (void**)&pEnum))) return false;
+    IMMDevice* pDev = nullptr;
+    bool ok = false;
+    if (SUCCEEDED(pEnum->GetDefaultAudioEndpoint(eRender, eMultimedia, &pDev))) {
+        IAudioEndpointVolume* pVol = nullptr;
+        if (SUCCEEDED(pDev->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_INPROC_SERVER, nullptr, (void**)&pVol))) {
+            pVol->SetMasterVolumeLevelScalar(Clamp(vol, 0.f, 1.f), nullptr);
+            pVol->Release();
+            ok = true;
+        }
+        pDev->Release();
+    }
+    pEnum->Release();
+    return ok;
+}
+
+static int QueryInitialBrightness() {
+    IWbemLocator* pLoc = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_WbemLocator, 0, CLSCTX_INPROC_SERVER, IID_IWbemLocator, (LPVOID*)&pLoc);
+    if (FAILED(hr)) return -1;
+    IWbemServices* pSvc = nullptr;
+    BSTR bstrNamespace = SysAllocString(L"ROOT\\WMI");
+    hr = pLoc->ConnectServer(bstrNamespace, nullptr, nullptr, 0, 0, 0, 0, &pSvc);
+    SysFreeString(bstrNamespace);
+    pLoc->Release();
+    if (FAILED(hr)) return -1;
+
+    CoSetProxyBlanket(pSvc, RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE, nullptr,
+                       RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE, nullptr, EOAC_NONE);
+
+    BSTR bstrClass = SysAllocString(L"WmiMonitorBrightness");
+    IEnumWbemClassObject* pEnum = nullptr;
+    hr = pSvc->CreateInstanceEnum(bstrClass, WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY, nullptr, &pEnum);
+    SysFreeString(bstrClass);
+
+    int cur = -1;
+    if (SUCCEEDED(hr) && pEnum) {
+        IWbemClassObject* pObj = nullptr;
+        ULONG uRet = 0;
+        if (pEnum->Next(WBEM_INFINITE, 1, &pObj, &uRet) == S_OK && uRet > 0) {
+            VARIANT vBri;
+            VariantInit(&vBri);
+            if (SUCCEEDED(pObj->Get(L"CurrentBrightness", 0, &vBri, 0, 0))) {
+                cur = vBri.bVal;
+                VariantClear(&vBri);
+            }
+            pObj->Release();
+        }
+        pEnum->Release();
+    }
+    pSvc->Release();
+    return cur;
+}
+
+static float QueryInitialVolume() {
+    float cur = -1.f;
+    IMMDeviceEnumerator* pEnum = nullptr;
+    if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_INPROC_SERVER,
+                                   __uuidof(IMMDeviceEnumerator), (void**)&pEnum))) {
+        IMMDevice* pDev = nullptr;
+        if (SUCCEEDED(pEnum->GetDefaultAudioEndpoint(eRender, eMultimedia, &pDev))) {
+            IAudioEndpointVolume* pVol = nullptr;
+            if (SUCCEEDED(pDev->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_INPROC_SERVER, nullptr, (void**)&pVol))) {
+                pVol->GetMasterVolumeLevelScalar(&cur);
+                pVol->Release();
+            }
+            pDev->Release();
+        }
+        pEnum->Release();
+    }
+    return cur;
+}
+
+static void HardwareControlThread() {
+    CoInitializeEx(0, COINIT_MULTITHREADED);
+    int lastBri = -1;
+    float lastVol = -1.f;
+
+    while (g_sysHardwareRunning.load()) {
+        int targetB = g_targetSysBri.load();
+        float targetV = g_targetSysVol.load();
+
+        if (targetB >= 0 && targetB != lastBri) {
+            lastBri = targetB;
+            bool ok = ApplyWmiBrightness(targetB);
+            if (!ok) ok = ApplyDdcBrightness(targetB);
+            if (!ok) ApplyGammaBrightness((float)targetB / 100.f);
+        }
+
+        if (targetV >= 0.f && std::fabs(targetV - lastVol) > 0.005f) {
+            lastVol = targetV;
+            ApplySystemVolume(targetV);
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    }
+    CoUninitialize();
+}
+
+// ----------------------------------------------------------------------------
 static void SampleSystem() {
     static int netTicks = 0;
     if (netTicks++ % 3 == 0) {
@@ -3006,9 +3226,16 @@ static float g_slideX = 0.f, g_slideW = 1.f;
 
 static void ApplySliderValue(int which, float mx) {
     float v = Clamp((mx - g_slideX) / (g_slideW > 1.f ? g_slideW : 1.f), 0.f, 1.f);
-    if (which == 0) g_vol = v;
-    else if (which == 1) g_bri = v;
-    else { g_pos = v * g_dur; g_playing = true; }
+    if (which == 0) {
+        g_vol = v;
+        g_targetSysVol.store(v);
+    } else if (which == 1) {
+        g_bri = v;
+        g_targetSysBri.store((int)std::lround(v * 100.f));
+    } else {
+        g_pos = v * g_dur;
+        g_playing = true;
+    }
 }
 
 // The same slider id exists in the bubble, in Settings and in the media card,
@@ -3702,7 +3929,16 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                 }
             }
         }
-        if (g_dragSlider >= 0) { g_dragSlider = -1; ReleaseCapture(); SaveSettings(); }
+        if (g_dragSlider >= 0) {
+            if (g_dragSlider == 1) {
+                ShowToast(L"Brightness " + std::to_wstring((int)std::lround(g_bri * 100.f)) + L"%", (wchar_t)0xE706);
+            } else if (g_dragSlider == 0) {
+                ShowToast(L"Volume " + std::to_wstring((int)std::lround(g_vol * 100.f)) + L"%", (wchar_t)0xE767);
+            }
+            g_dragSlider = -1;
+            ReleaseCapture();
+            SaveSettings();
+        }
         if (g_dragWin >= 0) {
             int kind = g_dragWin;
             bool wasMove = (g_dragPart == WP_TITLE);
@@ -3781,6 +4017,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_DESTROY:
         SafeRelease(g_wicFactory);
+        g_sysHardwareRunning.store(false);
+        if (g_sysHardwareThread.joinable()) g_sysHardwareThread.join();
         CoUninitialize();
         timeEndPeriod(1);
         g_netRunning = false;
@@ -3920,6 +4158,19 @@ int WINAPI WinMain(HINSTANCE hi, HINSTANCE, LPSTR, int nShow) {
     UpdateWindow(g_hwnd);
     SampleWifi();
     SampleBluetooth();
+
+    // Query live hardware brightness and master volume
+    int initBri = QueryInitialBrightness();
+    if (initBri >= 0) {
+        g_bri = Clamp((float)initBri / 100.f, 0.05f, 1.f);
+    }
+    float initVol = QueryInitialVolume();
+    if (initVol >= 0.f) {
+        g_vol = Clamp(initVol, 0.f, 1.f);
+    }
+    g_sysHardwareRunning.store(true);
+    g_sysHardwareThread = std::thread(HardwareControlThread);
+
     g_netThread = std::thread(NetWorkerThread);
     timeBeginPeriod(1);
     SetTimer(g_hwnd, 1, 10, nullptr);
