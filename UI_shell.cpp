@@ -81,6 +81,10 @@
 #include <endpointvolume.h>
 #include <highlevelmonitorconfigurationapi.h>
 #include <physicalmonitorenumerationapi.h>
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
+#include <propvarutil.h>
 
 #include "shell_layout.h"
 
@@ -100,6 +104,10 @@
 #pragma comment(lib, "wbemuuid.lib")
 #pragma comment(lib, "oleaut32.lib")
 #pragma comment(lib, "dxva2.lib")
+#pragma comment(lib, "mfplat.lib")
+#pragma comment(lib, "mfreadwrite.lib")
+#pragma comment(lib, "mfuuid.lib")
+#pragma comment(lib, "propsys.lib")
 #endif
 
 // ----------------------------------------------------------------------------
@@ -582,6 +590,157 @@ static float      g_hacc = 0.f;
 static int        g_hbase = 0;
 static double     g_hlastT = 0.0;
 
+// ----------------------------------------------------------------------------
+//  MP4 Live Video Wallpaper Engine (Windows Media Foundation)
+// ----------------------------------------------------------------------------
+static bool                  g_videoWpActive = false;
+static std::wstring          g_videoPath = L"";
+static ID2D1Bitmap*          g_videoBitmap = nullptr;
+static UINT32                g_videoW = 0, g_videoH = 0;
+static std::vector<BYTE>     g_videoPixelBuf;
+static std::mutex            g_videoLock;
+static std::atomic<bool>     g_videoNewFrame(false);
+static std::thread           g_videoThread;
+static std::atomic<bool>     g_videoRunning(false);
+static std::atomic<int>      g_videoFrameDelayMs(33); // default ~30fps
+
+static bool IsVideoPath(const std::wstring& path) {
+    if (path.size() < 4) return false;
+    size_t dot = path.rfind(L'.');
+    if (dot == std::wstring::npos) return false;
+    std::wstring ext = path.substr(dot);
+    for (auto& c : ext) c = (wchar_t)std::tolower(c);
+    return (ext == L".mp4" || ext == L".mkv" || ext == L".mov" || ext == L".avi" || ext == L".wmv" || ext == L".m4v");
+}
+
+static void StopVideoWallpaper() {
+    g_videoRunning.store(false);
+    if (g_videoThread.joinable()) {
+        g_videoThread.join();
+    }
+    g_videoWpActive = false;
+    std::lock_guard<std::mutex> lk(g_videoLock);
+    SafeRelease(g_videoBitmap);
+    g_videoPixelBuf.clear();
+    g_videoW = g_videoH = 0;
+}
+
+static void VideoPlaybackWorker(const std::wstring path) {
+    CoInitializeEx(NULL, COINIT_MULTITHREADED);
+
+    IMFAttributes* pAttrs = nullptr;
+    MFCreateAttributes(&pAttrs, 2);
+    if (pAttrs) {
+        pAttrs->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
+    }
+
+    IMFSourceReader* pReader = nullptr;
+    HRESULT hr = MFCreateSourceReaderFromURL(path.c_str(), pAttrs, &pReader);
+    if (pAttrs) pAttrs->Release();
+
+    if (FAILED(hr) || !pReader) {
+        CoUninitialize();
+        return;
+    }
+
+    // Request uncompressed 32-bit RGB
+    IMFMediaType* pMediaType = nullptr;
+    MFCreateMediaType(&pMediaType);
+    pMediaType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+    pMediaType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
+    hr = pReader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, pMediaType);
+    pMediaType->Release();
+
+    if (FAILED(hr)) {
+        pReader->Release();
+        CoUninitialize();
+        return;
+    }
+
+    // Determine dimensions and frame rate
+    UINT32 w = 0, h = 0;
+    IMFMediaType* pCurType = nullptr;
+    if (SUCCEEDED(pReader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, &pCurType))) {
+        MFGetAttributeSize(pCurType, MF_MT_FRAME_SIZE, &w, &h);
+        UINT32 num = 30, den = 1;
+        if (SUCCEEDED(MFGetAttributeRatio(pCurType, MF_MT_FRAME_RATE, &num, &den)) && num > 0) {
+            float fps = (float)num / (float)(den > 0 ? den : 1);
+            if (fps > 5.f && fps < 144.f) {
+                g_videoFrameDelayMs.store((int)(1000.f / fps));
+            }
+        }
+        pCurType->Release();
+    }
+
+    if (w == 0 || h == 0) {
+        w = 1920; h = 1080;
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(g_videoLock);
+        g_videoW = w;
+        g_videoH = h;
+        g_videoPixelBuf.resize(w * h * 4, 0);
+    }
+
+    DWORD streamIndex = 0, flags = 0;
+    LONGLONG llTimestamp = 0;
+
+    while (g_videoRunning.load()) {
+        if (!g_motion) {
+            // Paused when reduce motion is enabled
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
+        IMFSample* pSample = nullptr;
+        hr = pReader->ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, &streamIndex, &flags, &llTimestamp, &pSample);
+
+        if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+            // Loop seamlessly back to start
+            PROPVARIANT var;
+            PropVariantInit(&var);
+            var.vt = VT_I8;
+            var.hVal.QuadPart = 0;
+            static const GUID kGuidNull = { 0, 0, 0, { 0, 0, 0, 0, 0, 0, 0, 0 } };
+            pReader->SetCurrentPosition(kGuidNull, var);
+            PropVariantClear(&var);
+            continue;
+        }
+
+        if (SUCCEEDED(hr) && pSample) {
+            IMFMediaBuffer* pBuffer = nullptr;
+            if (SUCCEEDED(pSample->ConvertToContiguousBuffer(&pBuffer)) && pBuffer) {
+                BYTE* pData = nullptr;
+                DWORD cbLen = 0;
+                if (SUCCEEDED(pBuffer->Lock(&pData, nullptr, &cbLen))) {
+                    if (cbLen >= w * h * 4) {
+                        std::lock_guard<std::mutex> lk(g_videoLock);
+                        memcpy(g_videoPixelBuf.data(), pData, w * h * 4);
+                        g_videoNewFrame.store(true);
+                    }
+                    pBuffer->Unlock();
+                }
+                pBuffer->Release();
+            }
+            pSample->Release();
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(g_videoFrameDelayMs.load()));
+    }
+
+    pReader->Release();
+    CoUninitialize();
+}
+
+static void StartVideoWallpaper(const std::wstring& path) {
+    StopVideoWallpaper();
+    g_videoPath = path;
+    g_videoRunning.store(true);
+    g_videoWpActive = true;
+    g_videoThread = std::thread(VideoPlaybackWorker, path);
+}
+
 static void GoPage(int p, float initialVel = 0.f) {
     g_page = p < 0 ? 0 : (p > HOME_PAGES - 1 ? HOME_PAGES - 1 : p);
     g_pageA.ToWithVel((float)g_page, initialVel);
@@ -622,6 +781,7 @@ enum {
     H_SET_NAV = 760,                         // + page          (Settings tabs)
     H_SET_WP = 770,                          // + preset        (wallpaper swatches)
     H_SET_CUSTOM_WP = 778,                   // choose custom image button
+    H_SET_SAMPLE_VID = 779,                  // quick sample MP4 video button
     H_SET_SIZE = 780,                        // + index         (widget size)
     H_SET_WIDGET = 785,                      // + widget        (visibility)
     H_SET_MISC = 796,                        // + 0 clock, +1 motion
@@ -800,6 +960,9 @@ static void LoadSettings() {
     g_customWpPath = cwp;
     g_wp  = GetPrivateProfileIntW(L"shell", L"wallpaper", 0, p.c_str()) % WP_COUNT;
     if (g_wp < 0) g_wp = 0;
+    if (g_wp == WP_COUNT - 1 && IsVideoPath(g_customWpPath)) {
+        StartVideoWallpaper(g_customWpPath);
+    }
     for (int i = 0; i < TOG_COUNT; ++i) {
         wchar_t key[16];
         swprintf(key, 16, L"tog%d", i);
@@ -1005,7 +1168,14 @@ static void SetWallpaper(int idx) {
         PromptCustomWallpaper(g_hwnd);
         return;
     }
-    if (idx == g_wp && g_wpBitmap) return;
+    if (idx != WP_COUNT - 1 || !IsVideoPath(g_customWpPath)) {
+        StopVideoWallpaper();
+    } else {
+        if (!g_videoWpActive || g_videoPath != g_customWpPath) {
+            StartVideoWallpaper(g_customWpPath);
+        }
+    }
+    if (idx == g_wp && (g_wpBitmap || g_videoWpActive)) return;
     g_wp = idx;
     SaveSettings();
 
@@ -1021,6 +1191,17 @@ static void SetWallpaper(int idx) {
 
 static void SetCustomWallpaper(const std::wstring& path) {
     if (path.empty()) return;
+
+    if (IsVideoPath(path)) {
+        g_customWpPath = path;
+        g_wp = WP_COUNT - 1;
+        StartVideoWallpaper(path);
+        SaveSettings();
+        ShowToast(L"Loaded MP4 Video Wallpaper", (wchar_t)0xE714);
+        return;
+    }
+
+    StopVideoWallpaper();
     g_customWpPath = path;
     g_wp = WP_COUNT - 1;
     SaveSettings();
@@ -1039,11 +1220,11 @@ static void PromptCustomWallpaper(HWND hwnd) {
     wchar_t filename[MAX_PATH] = L"";
     OPENFILENAMEW ofn = { sizeof(OPENFILENAMEW) };
     ofn.hwndOwner = hwnd;
-    ofn.lpstrFilter = L"Image Files (*.jpg;*.jpeg;*.png;*.bmp;*.webp)\0*.jpg;*.jpeg;*.png;*.bmp;*.webp\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFilter = L"Video & Image Wallpapers (*.mp4;*.mov;*.jpg;*.png;*.webp)\0*.mp4;*.mkv;*.mov;*.avi;*.wmv;*.jpg;*.jpeg;*.png;*.bmp;*.webp\0MP4 Video Files (*.mp4)\0*.mp4\0Image Files (*.jpg;*.png;*.webp)\0*.jpg;*.jpeg;*.png;*.bmp;*.webp\0All Files (*.*)\0*.*\0";
     ofn.lpstrFile = filename;
     ofn.nMaxFile = MAX_PATH;
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-    ofn.lpstrTitle = L"Select Custom Desktop Wallpaper";
+    ofn.lpstrTitle = L"Select MP4 Video or Image Wallpaper";
     if (GetOpenFileNameW(&ofn)) {
         SetCustomWallpaper(filename);
     }
@@ -1110,7 +1291,39 @@ static void DrawWallpaper() {
         parY = (g_lastMouseY - DH * 0.5f) * -0.016f;
     }
 
-    if (g_wpBitmap) {
+    if (g_videoWpActive) {
+        if (!g_videoBitmap || g_videoNewFrame.load()) {
+            std::lock_guard<std::mutex> lk(g_videoLock);
+            if (g_videoW > 0 && g_videoH > 0 && g_videoPixelBuf.size() >= g_videoW * g_videoH * 4) {
+                if (!g_videoBitmap || g_videoBitmap->GetPixelSize().width != g_videoW || g_videoBitmap->GetPixelSize().height != g_videoH) {
+                    SafeRelease(g_videoBitmap);
+                    D2D1_BITMAP_PROPERTIES props;
+                    props.pixelFormat = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE);
+                    props.dpiX = 96.f;
+                    props.dpiY = 96.f;
+                    g_rt->CreateBitmap(D2D1::SizeU(g_videoW, g_videoH), g_videoPixelBuf.data(), g_videoW * 4, props, &g_videoBitmap);
+                } else if (g_videoNewFrame.load()) {
+                    g_videoBitmap->CopyFromMemory(nullptr, g_videoPixelBuf.data(), g_videoW * 4);
+                }
+            }
+            g_videoNewFrame.store(false);
+        }
+
+        if (g_videoBitmap) {
+            float scale = std::max(DW / (float)g_videoW, DH / (float)g_videoH) * (g_parallax ? 1.04f : 1.0f);
+            float drawW = (float)g_videoW * scale;
+            float drawH = (float)g_videoH * scale;
+            float drawX = (DW - drawW) * 0.5f + parX;
+            float drawY = (DH - drawH) * 0.5f + parY;
+
+            g_rt->DrawBitmap(g_videoBitmap, R(drawX, drawY, drawW, drawH), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+
+            // Dark ambient atmospheric scrim for high contrast and text readability (accessibility)
+            float scrimAlpha = Clamp(g_wpDim, 0.05f, 0.85f);
+            g_br->SetColor(C(0x06080C, scrimAlpha));
+            g_rt->FillRectangle(R(0.f, 0.f, DW, DH), g_br);
+        }
+    } else if (g_wpBitmap) {
         D2D1_SIZE_F sz = g_wpBitmap->GetSize();
         if (sz.width > 0.f && sz.height > 0.f) {
             float scale = std::max(DW / sz.width, DH / sz.height) * (g_parallax ? 1.04f : 1.0f);
@@ -2138,10 +2351,18 @@ static void SettingsContent(float x, float y, float w, float h) {
         Fill(lx, customBtnY, half, 32.f, 9.f, C(WHITE, hovCustom ? 0.10f : 0.05f));
         Stroke(lx, customBtnY, half, 32.f, 9.f, C(WHITE, hovCustom ? 0.22f : 0.12f));
         Glyph((wchar_t)0xE8B9, lx + 20.f, customBtnY + 16.f, 12.f, COL_T90);
-        Txt(L"Browse Custom Image...", lx + 38.f, customBtnY + 7.f, half - 48.f, 18.f, F_UI, 11.f, 500, COL_T90, 0, 1.f);
+        Txt(L"Browse Image or MP4 Video...", lx + 38.f, customBtnY + 7.f, half - 48.f, 18.f, F_UI, 11.f, 500, COL_T90, 0, 1.f);
         AddHit(lx, customBtnY, half, 32.f, H_SET_CUSTOM_WP);
 
-        float ly = customBtnY + 44.f;
+        float sampleVidBtnY = customBtnY + 38.f;
+        bool hovSample = (g_hover == H_SET_SAMPLE_VID);
+        Fill(lx, sampleVidBtnY, half, 32.f, 9.f, C(COL_ACTIVE, hovSample ? 0.22f : 0.10f));
+        Stroke(lx, sampleVidBtnY, half, 32.f, 9.f, C(COL_ACTIVE, hovSample ? 0.55f : 0.30f));
+        Glyph((wchar_t)0xE714, lx + 20.f, sampleVidBtnY + 16.f, 12.f, COL_T100);
+        Txt(L"Load Sample MP4 (Tesla / New Year)", lx + 38.f, sampleVidBtnY + 7.f, half - 48.f, 18.f, F_UI, 11.f, 500, COL_T100, 0, 1.f);
+        AddHit(lx, sampleVidBtnY, half, 32.f, H_SET_SAMPLE_VID);
+
+        float ly = sampleVidBtnY + 44.f;
         Txt(L"WIDGET SIZE", lx, ly, half, 18.f, F_UI, 10.f, 600, COL_T35, 0, 1.f);
         {
             const float bw = (half - 16.f) / 3.f;
@@ -3043,6 +3264,7 @@ static void UpdateAnimations(float dt) {
 // ----------------------------------------------------------------------------
 static void ReleaseBrushes() {
     SafeRelease(g_wpBitmap);
+    SafeRelease(g_videoBitmap);
     SafeRelease(g_wpOldBitmap);
     SafeRelease(g_br);
     SafeRelease(g_wpA);
@@ -3383,6 +3605,16 @@ static void HandleClick(int id, float mx, float my) {
     }
     if (id == H_SET_CUSTOM_WP) {
         PromptCustomWallpaper(g_hwnd);
+        return;
+    }
+    if (id == H_SET_SAMPLE_VID) {
+        if (GetFileAttributesW(L"C:\\Users\\jayap\\Videos\\tesla.mp4") != INVALID_FILE_ATTRIBUTES) {
+            SetCustomWallpaper(L"C:\\Users\\jayap\\Videos\\tesla.mp4");
+        } else if (GetFileAttributesW(L"C:\\Users\\jayap\\Videos\\NEW YEAR.mp4") != INVALID_FILE_ATTRIBUTES) {
+            SetCustomWallpaper(L"C:\\Users\\jayap\\Videos\\NEW YEAR.mp4");
+        } else {
+            PromptCustomWallpaper(g_hwnd);
+        }
         return;
     }
     if (id >= H_SET_WP && id < H_SET_WP + WP_COUNT) {
@@ -4141,6 +4373,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         DestroyWindow(h);
         return 0;
     case WM_DESTROY:
+        StopVideoWallpaper();
+        MFShutdown();
         SafeRelease(g_wicFactory);
         g_sysHardwareRunning.store(false);
         if (g_sysHardwareThread.joinable()) g_sysHardwareThread.join();
@@ -4226,6 +4460,7 @@ static_assert(H_HDOT + HOME_PAGES <= 1300, "home page dots overlap other ids");
 // ----------------------------------------------------------------------------
 int WINAPI WinMain(HINSTANCE hi, HINSTANCE, LPSTR, int nShow) {
     CoInitialize(NULL);
+    MFStartup(MF_VERSION);
     // Per-monitor DPI v2 when available (Win10 1703+), plain aware otherwise.
     HMODULE user32 = GetModuleHandleW(L"user32.dll");
     if (user32) {

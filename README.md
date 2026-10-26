@@ -21,7 +21,12 @@ A high-performance, hardware-accelerated desktop shell for Windows written in na
   - **Predictive Target Projection**: Fling target projection $x_{\text{projected}} = x_0 + \frac{v_0}{1 - d}$ for intuitive page snapping.
   - **Bounded Rubber-Band Boundaries**: Hyperbolic overscroll resistance preventing harsh clamp stops at edges.
 
-- **Live Wallpaper Background Engine & Accessibility**:
+- **Live Wallpaper Background Engine & MP4 Video Support**:
+  - **Hardware-Accelerated MP4 Live Video Wallpaper Engine**: Seamlessly decode and loop any `.mp4`, `.mkv`, `.mov`, `.avi`, or `.wmv` video file directly as the desktop background using native **Windows Media Foundation** (`IMFSourceReader`). Background decoding worker runs on a dedicated thread with `MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING = TRUE`, streaming uncompressed 32-bit RGB frames directly into Direct2D hardware bitmaps (`DXGI_FORMAT_B8G8R8A8_UNORM`) via `CopyFromMemory` with zero UI frame drops.
+  - **Infinite Seamless Looping**: End-of-stream detection automatically resets stream position back to start without stutter or black flashes.
+  - **3D Mouse Parallax & Accessibility Scrim**: Video wallpapers respect the interactive 3D mouse parallax depth offset and the real-time background dimming scrim slider (`H_WPDIM`), preserving perfect readability for cards, typography, and desk widgets.
+  - **Motion Awareness**: Pauses video frame decoding when "Reduce motion" is enabled in Quick Settings or Settings Preferences.
+  - **Settings & File Dialog Integration**: Settings -> Appearance includes an enhanced file browser accepting both video and image files (`*.mp4`, `*.mov`, `*.jpg`, `*.png`, `*.webp`), plus a quick-load button `[ Load Sample MP4 (Tesla / New Year) ]` to instantly test local system MP4s (`tesla.mp4` / `NEW YEAR.mp4`). Automatically persisted to `shell.ini` under `custom_wp`.
   - **Procedural Floating Particle Embers**: 48 organic glowing embers and fireflies floating upward with sinusoidal sway, breathing alpha pulsation, and ambient emerald aura.
   - **3D Mouse Parallax Depth**: Interactive subtle parallax shifting background layers based on mouse coordinates for 3D depth, with an on/off accessibility toggle.
   - **Quick Settings "Live Wallpaper" Tile**: 1-click toggle in the Quick Settings flyout to turn live particle motion on or pause it instantly.
@@ -76,7 +81,8 @@ Or run `g++` directly:
 ```bash
 g++ -std=c++17 -O2 -s -mwindows -static UI_shell.cpp -o UI_shell.exe \
     -ld2d1 -ldwrite -luser32 -lgdi32 -lwinhttp -lwlanapi -lbthprops \
-    -lshell32 -lwinmm -lole32 -loleaut32 -lwbemuuid -ldxva2 -lwindowscodecs -lcomdlg32
+    -lshell32 -lwinmm -lole32 -loleaut32 -lwbemuuid -ldxva2 -lwindowscodecs -lcomdlg32 \
+    -lmfplat -lmfreadwrite -lmfuuid -lpropsys
 ```
 
 ### Running
