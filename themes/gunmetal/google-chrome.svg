@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 256 256" width="256" height="256">
+<metadata>Dark metallic mobile theme — Gunmetal (default) — generated from svg/google-chrome.svg</metadata>
+  <defs>
+    <linearGradient id="mt-base" x1="0.12" y1="0" x2="0.88" y2="1">
+      <stop offset="0" stop-color="#3c444f"/>
+      <stop offset="0.52" stop-color="#242a32"/>
+      <stop offset="1" stop-color="#11151a"/>
+    </linearGradient>
+    <radialGradient id="mt-sheen" cx="0.24" cy="0.12" r="0.85">
+      <stop offset="0" stop-color="#dfe8f2" stop-opacity="0.12"/>
+      <stop offset="0.55" stop-color="#dfe8f2" stop-opacity="0.034"/>
+      <stop offset="1" stop-color="#dfe8f2" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mt-rim" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#a8b4c2" stop-opacity="0.62"/>
+      <stop offset="0.5" stop-color="#39414b" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#79879a" stop-opacity="0.5"/>
+    </linearGradient>
+    <linearGradient id="mt-top" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.26"/>
+      <stop offset="0.35" stop-color="#ffffff" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="mt-brush" width="6" height="6" patternUnits="userSpaceOnUse"
+             patternTransform="rotate(45)">
+      <path d="M0 0v6" stroke="#ffffff" stroke-opacity="0.05" stroke-width="1"/>
+    </pattern>
+    <clipPath id="mt-clip">
+      <rect x="8" y="8" width="240" height="240" rx="58"/>
+    </clipPath>
+    <filter id="mt-shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+    <filter id="mt-inset" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+    <filter id="mt-halo" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#c8dcf2" flood-opacity="0.62"/>
+    </filter>
+  </defs>
+
+  <!-- metal tile -->
+  <rect x="8" y="8" width="240" height="240" rx="58" fill="url(#mt-base)"/>
+  <g clip-path="url(#mt-clip)">
+    <rect x="8" y="8" width="240" height="240" fill="url(#mt-brush)"/>
+    <rect x="8" y="8" width="240" height="240" fill="url(#mt-sheen)"/>
+    <!-- inner shadow around the edges -->
+    <rect x="15" y="15" width="226" height="226" rx="52"
+          fill="none" stroke="#000000" stroke-opacity="0.55" stroke-width="16" filter="url(#mt-inset)"/>
+    <!-- top face highlight -->
+    <rect x="8" y="8" width="240" height="240" fill="url(#mt-top)"/>
+  </g>
+  <!-- metallic rim -->
+  <rect x="9" y="9" width="238" height="238" rx="57"
+        fill="none" stroke="url(#mt-rim)" stroke-width="2"/>
+  <!-- machined face the artwork sits on -->
+  <rect x="42" y="42" width="172" height="172" rx="40" fill="#ffffff" fill-opacity="0.055"/>
+  <rect x="42" y="42" width="172" height="172" rx="40" fill="none" stroke="url(#mt-rim)" stroke-opacity="0.75" stroke-width="2"/>
+
+  <!-- artwork -->
+  <g transform="translate(44.0000 44.0000) scale(0.884211)" fill="none">
+    <g filter="url(#mt-shadow)">
+<linearGradient id="d" x1="28.3" x2="80.8" y1="75" y2="44.4" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#a52714" stop-opacity=".6"/><stop offset=".7" stop-color="#a52714" stop-opacity="0"/></linearGradient><linearGradient id="f" x1="109.9" x2="51.5" y1="164.5" y2="130.3" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#055524" stop-opacity=".4"/><stop offset=".3" stop-color="#055524" stop-opacity="0"/></linearGradient><linearGradient id="h" x1="121.9" x2="136.6" y1="49.8" y2="114.1" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ea6100" stop-opacity=".3"/><stop offset=".7" stop-color="#ea6100" stop-opacity="0"/></linearGradient><radialGradient id="a" cx="91.2" cy="55" r="84.1" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#3e2723" stop-opacity=".2"/><stop offset="1" stop-color="#3e2723" stop-opacity="0"/></radialGradient><radialGradient xlink:href="#a" id="i" cx="20.9" cy="47.5" r="78"/><radialGradient id="j" cx="94.8" cy="95.1" r="87.9" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#263238" stop-opacity=".2"/><stop offset="1" stop-color="#263238" stop-opacity="0"/></radialGradient><radialGradient id="k" cx="33.3" cy="31" r="176.8" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#fff" stop-opacity=".1"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient><clipPath id="b"><circle cx="95" cy="95" r="88"/></clipPath><g clip-path="url(#b)"><use xlink:href="#c" fill="#db4437"/><use xlink:href="#c" fill="url(#d)"/><use xlink:href="#e" fill="#0f9d58"/><use xlink:href="#e" fill="url(#f)"/><use xlink:href="#g" fill="#ffcd40"/><use xlink:href="#g" fill="url(#h)"/><g fill-opacity=".1"><path fill="#3e2723" d="M61.3 114.7 21 47.4l39 67.8z"/><path fill="#263238" d="m128.8 116.3-.8-.4-37.3 67 38.3-67z"/></g><path id="e" d="M7 183h83.8l39-39v-29H60.2L7 23.5z"/><path id="g" d="m95 55 34.6 60L91 183h92V55z"/><path id="c" d="M21 7v108h39.4L95 55h88V7z"/><path fill="url(#a)" d="M95 55v21l78.4-21z"/><path fill="url(#i)" d="m21 47.5 57.2 57.2L60.4 115z"/><path fill="url(#j)" d="m90.8 183 21-78.3 17.8 10.3z"/><circle cx="95" cy="95" r="40" fill="#f1f1f1"/><circle cx="95" cy="95" r="32" fill="#4285f4"/><circle cx="95" cy="95" r="88" fill="url(#k)"/><g fill="#3e2723" fill-opacity=".1"><path fill="#fff" d="M129.6 115a40 40 0 0 1-69.2 0L7 24.5 60.4 116a40 40 0 0 0 69.2 0z"/><path d="M96 55h-.5a40 40 0 1 1 0 80h.5c22 0 40-18 40-40s-18-40-40-40m-1 127a88 88 0 0 0 88-87.5v.5A88 88 0 0 1 7 95v-.5A88 88 0 0 0 95 182"/><g fill-opacity=".2"><path fill="#fff" d="M130 116.3a39.3 39.3 0 0 0 3.4-32 38 38 0 0 1-3.8 30.7L92 183l38.2-66.5zM95 8a88 88 0 0 1 88 87.5V95A88 88 0 0 0 7 95v.5A88 88 0 0 1 95 8"/><path d="M95 54c-22 0-40 18-40 40v1c0-22 18-40 40-40h88v-1z"/></g></g></g>
+    </g>
+  </g>
+</svg>

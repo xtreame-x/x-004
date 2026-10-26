@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="win" x1="0" y1="0" x2="0.2" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e9eff6"/>
+    </linearGradient>
+    <linearGradient id="hdr" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4fa3e3"/>
+      <stop offset="1" stop-color="#1b6bb0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="20" y="26" width="216" height="204" rx="22" fill="url(#win)" stroke="#b9c6d5" stroke-width="5"/>
+  <path d="M20 48a22 22 0 0 1 22-22h172a22 22 0 0 1 22 22v18H20z" fill="url(#hdr)"/>
+  <g fill="#ffffff" opacity="0.92">
+    <circle cx="44" cy="47" r="6"/><circle cx="64" cy="47" r="6"/><circle cx="84" cy="47" r="6"/>
+  </g>
+
+  <!-- three large cells -->
+  <g fill="#eef3f9" stroke="#ccd8e5" stroke-width="4">
+    <rect x="38" y="94" width="56" height="56" rx="12"/>
+    <rect x="100" y="94" width="56" height="56" rx="12"/>
+    <rect x="162" y="94" width="56" height="56" rx="12"/>
+    <rect x="38" y="160" width="56" height="52" rx="12"/>
+    <rect x="100" y="160" width="56" height="52" rx="12"/>
+    <rect x="162" y="160" width="56" height="52" rx="12"/>
+  </g>
+
+  <!-- glyphs -->
+  <g fill="none" stroke="#7d8fa4" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M52 134l14-26 14 26M57 124h18"/>
+    <path d="M114 112v28M138 112v28M108 120h36M108 132h36"/>
+    <path d="M176 138l28-28M204 138l-28-28"/>
+    <circle cx="66" cy="186" r="14"/>
+    <path d="M114 172h28l-28 28h28"/>
+    <path d="M182 200h24"/>
+    <path d="M194 172v28"/>
+  </g>
+
+  <!-- selected cell, highlighted -->
+  <rect x="100" y="94" width="56" height="56" rx="12" fill="#0a66c2"/>
+  <path d="M114 112v28M138 112v28M108 120h36M108 132h36" stroke="#ffffff" stroke-width="8"
+        stroke-linecap="round" fill="none"/>
+</svg>

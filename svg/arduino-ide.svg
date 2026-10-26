@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="ai" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00c7b0"/>
+      <stop offset="1" stop-color="#00878a"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="10" y="10" width="236" height="236" rx="56" fill="url(#ai)"/>
+  <rect x="10" y="10" width="236" height="236" rx="56" fill="none" stroke="#ffffff" stroke-opacity="0.15" stroke-width="3"/>
+
+  <!-- arduino infinity -->
+  <g fill="none" stroke="#ffffff" stroke-width="16" stroke-linecap="round">
+    <path d="M128 128c-14-20-26-30-42-30-22 0-38 14-38 30s16 30 38 30c16 0 28-10 42-30z"/>
+    <path d="M128 128c14-20 26-30 42-30 22 0 38 14 38 30s-16 30-38 30c-16 0-28-10-42-30z"/>
+  </g>
+  <path d="M128 104v48" stroke="#ffffff" stroke-width="10" stroke-linecap="round" opacity="0.9"/>
+</svg>

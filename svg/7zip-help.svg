@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="z7h" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#3b3b3b"/>
+      <stop offset="0.55" stop-color="#1e1e1e"/>
+      <stop offset="1" stop-color="#0b0b0b"/>
+    </linearGradient>
+    <linearGradient id="qq" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5ec5ff"/>
+      <stop offset="1" stop-color="#0a66c2"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="10" y="10" width="236" height="236" rx="52" fill="url(#z7h)"/>
+  <rect x="10" y="10" width="236" height="236" rx="52" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="3"/>
+
+  <path d="M54 70h50l-28 56v34" fill="none" stroke="#ffffff" stroke-width="15"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M120 70h48l-48 48h48" fill="none" stroke="#f3c33a" stroke-width="15"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- help badge -->
+  <circle cx="178" cy="178" r="46" fill="#ffffff"/>
+  <circle cx="178" cy="178" r="39" fill="url(#qq)"/>
+  <path d="M164 164a14 14 0 1 1 14 18v6" fill="none" stroke="#ffffff" stroke-width="10"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="178" cy="202" r="6" fill="#ffffff"/>
+</svg>

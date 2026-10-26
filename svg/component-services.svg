@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="gb" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd76a"/>
+      <stop offset="1" stop-color="#e08a00"/>
+    </linearGradient>
+    <linearGradient id="bl" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#7cc4f5"/>
+      <stop offset="1" stop-color="#1a63a8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- component blocks -->
+  <rect x="126" y="42" width="104" height="72" rx="16" fill="url(#bl)"/>
+  <rect x="126" y="130" width="104" height="72" rx="16" fill="url(#bl)" opacity="0.85"/>
+
+  <!-- gear -->
+  <g transform="translate(88 132)">
+    <g fill="url(#gb)">
+      <rect x="-11" y="-72" width="22" height="22" rx="5"/>
+      <rect x="-11" y="-72" width="22" height="22" rx="5" transform="rotate(45)"/>
+      <rect x="-11" y="-72" width="22" height="22" rx="5" transform="rotate(90)"/>
+      <rect x="-11" y="-72" width="22" height="22" rx="5" transform="rotate(135)"/>
+      <rect x="-11" y="-72" width="22" height="22" rx="5" transform="rotate(180)"/>
+      <rect x="-11" y="-72" width="22" height="22" rx="5" transform="rotate(225)"/>
+      <rect x="-11" y="-72" width="22" height="22" rx="5" transform="rotate(270)"/>
+      <rect x="-11" y="-72" width="22" height="22" rx="5" transform="rotate(315)"/>
+    </g>
+    <circle r="52" fill="url(#gb)"/>
+    <circle r="20" fill="#ffffff"/>
+    <circle r="10" fill="#e08a00"/>
+  </g>
+</svg>

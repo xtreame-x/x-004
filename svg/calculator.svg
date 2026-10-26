@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="body" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#fbfdff"/>
+      <stop offset="0.55" stop-color="#e6edf6"/>
+      <stop offset="1" stop-color="#c9d6e4"/>
+    </linearGradient>
+    <linearGradient id="disp" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b3440"/>
+      <stop offset="1" stop-color="#161c24"/>
+    </linearGradient>
+    <linearGradient id="acc" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#45a8ff"/>
+      <stop offset="1" stop-color="#0a66c2"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="48" y="18" width="160" height="220" rx="26" fill="url(#body)" stroke="#adbccd" stroke-width="4"/>
+  <rect x="64" y="34" width="128" height="44" rx="12" fill="url(#disp)"/>
+  <rect x="138" y="44" width="44" height="12" rx="6" fill="#8fb8dd" opacity="0.85"/>
+
+  <!-- keys -->
+  <g fill="#ffffff" stroke="#c2cfdd" stroke-width="3">
+    <rect x="66" y="92" width="38" height="30" rx="9"/>
+    <rect x="110" y="92" width="38" height="30" rx="9"/>
+    <rect x="154" y="92" width="38" height="30" rx="9"/>
+    <rect x="66" y="130" width="38" height="30" rx="9"/>
+    <rect x="110" y="130" width="38" height="30" rx="9"/>
+    <rect x="66" y="168" width="38" height="30" rx="9"/>
+    <rect x="110" y="168" width="38" height="30" rx="9"/>
+    <rect x="66" y="206" width="82" height="22" rx="9"/>
+  </g>
+  <g fill="url(#acc)" stroke="none">
+    <rect x="154" y="130" width="38" height="68" rx="9"/>
+    <rect x="154" y="206" width="38" height="22" rx="9"/>
+  </g>
+
+  <!-- key glyphs -->
+  <g stroke="#8fa0b4" stroke-width="5" stroke-linecap="round">
+    <path d="M76 107h18M85 98v18"/>
+    <path d="M120 107h18"/>
+    <path d="M164 98v18M155 107h18"/>
+    <path d="M76 145h18M85 136v18"/>
+    <path d="M120 136v18M120 145h18"/>
+    <path d="M76 183h18
+             M85 174v18"/>
+    <path d="M120 181l18 18M138 181l-18 18"/>
+  </g>
+  <g stroke="#ffffff" stroke-width="6" stroke-linecap="round">
+    <path d="M165 168h16M165 190h16M165 217h16"/>
+  </g>
+</svg>

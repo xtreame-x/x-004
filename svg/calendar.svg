@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="hdr" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff6a5e"/>
+      <stop offset="1" stop-color="#d92b1f"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#eef1f6"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="34" y="46" width="188" height="176" rx="22" fill="url(#card)" stroke="#ccd4df" stroke-width="4"/>
+  <path d="M34 68a22 22 0 0 1 22-22h144a22 22 0 0 1 22 22v40H34z" fill="url(#hdr)"/>
+
+  <!-- rings -->
+  <g stroke="#8e99a8" stroke-width="12" stroke-linecap="round">
+    <path d="M88 34v22M168 34v22"/>
+  </g>
+
+  <!-- date dots -->
+  <g fill="#c3ccd8">
+    <circle cx="78" cy="140" r="11"/><circle cx="110" cy="140" r="11"/><circle cx="142" cy="140" r="11"/>
+    <circle cx="174" cy="140" r="11"/>
+    <circle cx="78" cy="172" r="11"/><circle cx="110" cy="172" r="11"/><circle cx="142" cy="172" r="11"/>
+    <circle cx="174" cy="172" r="11"/>
+    <circle cx="78" cy="204" r="11"/><circle cx="110" cy="204" r="11"/>
+  </g>
+  <circle cx="142" cy="204" r="13" fill="#d92b1f"/>
+</svg>
